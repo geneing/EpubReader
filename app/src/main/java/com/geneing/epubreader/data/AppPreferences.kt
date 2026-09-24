@@ -41,6 +41,9 @@ object AppPreferences {
     private const val KEY_READER_FONT_SCALE = "reader_font_scale"
     private const val KEY_SPEECH_ENGINE = "speech_engine"
     private const val KEY_SPEECH_RATE = "speech_rate"
+    private const val KEY_PLAYBACK_GRACE_MINUTES = "playback_grace_minutes"
+    private const val KEY_RESUME_ON_BLUETOOTH_RECONNECT = "resume_on_bluetooth_reconnect"
+    private const val KEY_RESUME_AFTER_LONG_INTERRUPTION = "resume_after_long_interruption"
 
     fun themeMode(context: Context): ThemeMode = ThemeMode.fromStorageKey(
         context.applicationContext
@@ -84,6 +87,30 @@ object AppPreferences {
         preferences(context).edit().putFloat(KEY_SPEECH_RATE, rate.coerceIn(MIN_SPEECH_RATE, MAX_SPEECH_RATE)).apply()
     }
 
+    fun playbackGraceMinutes(context: Context): Int = preferences(context)
+        .getInt(KEY_PLAYBACK_GRACE_MINUTES, DEFAULT_PLAYBACK_GRACE_MINUTES)
+        .coerceIn(MIN_PLAYBACK_GRACE_MINUTES, MAX_PLAYBACK_GRACE_MINUTES)
+
+    fun setPlaybackGraceMinutes(context: Context, minutes: Int) {
+        preferences(context).edit()
+            .putInt(KEY_PLAYBACK_GRACE_MINUTES, minutes.coerceIn(MIN_PLAYBACK_GRACE_MINUTES, MAX_PLAYBACK_GRACE_MINUTES))
+            .apply()
+    }
+
+    fun resumeOnBluetoothReconnect(context: Context): Boolean =
+        preferences(context).getBoolean(KEY_RESUME_ON_BLUETOOTH_RECONNECT, false)
+
+    fun setResumeOnBluetoothReconnect(context: Context, enabled: Boolean) {
+        preferences(context).edit().putBoolean(KEY_RESUME_ON_BLUETOOTH_RECONNECT, enabled).apply()
+    }
+
+    fun resumeAfterLongInterruption(context: Context): Boolean =
+        preferences(context).getBoolean(KEY_RESUME_AFTER_LONG_INTERRUPTION, false)
+
+    fun setResumeAfterLongInterruption(context: Context, enabled: Boolean) {
+        preferences(context).edit().putBoolean(KEY_RESUME_AFTER_LONG_INTERRUPTION, enabled).apply()
+    }
+
     private fun preferences(context: Context) = context.applicationContext
         .getSharedPreferences(PREFERENCES_FILE, Context.MODE_PRIVATE)
 
@@ -93,4 +120,7 @@ object AppPreferences {
     const val DEFAULT_SPEECH_RATE = 1.0f
     const val MIN_SPEECH_RATE = 0.5f
     const val MAX_SPEECH_RATE = 2.0f
+    const val DEFAULT_PLAYBACK_GRACE_MINUTES = 5
+    const val MIN_PLAYBACK_GRACE_MINUTES = 0
+    const val MAX_PLAYBACK_GRACE_MINUTES = 10
 }

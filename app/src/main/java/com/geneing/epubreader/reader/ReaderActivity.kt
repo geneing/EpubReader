@@ -70,6 +70,8 @@ import com.geneing.epubreader.data.AppPreferences
 import com.geneing.epubreader.data.BookFormat
 import com.geneing.epubreader.data.LibraryRepository
 import com.geneing.epubreader.data.ReaderFontFamily
+import com.geneing.epubreader.playback.PlaybackServiceCommands
+import com.geneing.epubreader.playback.PlaybackStateStore
 import com.geneing.epubreader.ui.EpubReaderTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -79,11 +81,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.readium.navigator.media.common.MediaNavigator
-import org.readium.navigator.media.tts.AndroidTtsNavigator
-import org.readium.navigator.media.tts.AndroidTtsNavigatorFactory
-import org.readium.navigator.media.tts.TtsNavigator
-import org.readium.navigator.media.tts.android.AndroidTtsPreferences
 import org.readium.r2.navigator.DecorableNavigator
 import org.readium.r2.navigator.Decoration
 import org.readium.r2.navigator.OverflowableNavigator
@@ -102,11 +99,11 @@ import org.readium.r2.shared.publication.services.positionsByReadingOrder
 import org.readium.r2.shared.publication.services.locateProgression
 import org.readium.r2.shared.publication.services.search.SearchIterator
 import org.readium.r2.shared.publication.services.search.search
+import org.readium.r2.shared.util.getOrElse
 import org.readium.r2.shared.publication.Link
 import org.readium.adapter.pdfium.navigator.PdfiumEngineProvider
 import org.readium.adapter.pdfium.navigator.PdfiumDefaults
 import org.readium.r2.shared.ExperimentalReadiumApi
-import org.readium.r2.shared.util.getOrElse
 import org.readium.r2.navigator.preferences.Theme as ReadiumTheme
 
 @OptIn(ExperimentalReadiumApi::class)
@@ -138,10 +135,8 @@ class ReaderActivity : FragmentActivity() {
     private var currentFormat: BookFormat? = null
     private var initialLocator: Locator? = null
     private var containerAvailable = false
-    private var ttsNavigator: AndroidTtsNavigator? = null
-    private var ttsPlaybackJob: Job? = null
-    private var ttsLocationJob: Job? = null
     private var currentSearch: SearchIterator? = null
+    private var observedPlaybackLocator: Locator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val format = BookFormat.from(
@@ -209,6 +204,37 @@ class ReaderActivity : FragmentActivity() {
                     },
                     onBack = ::finish,
                 )
+            }
+        }
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                PlaybackStateStore.state.collect { state ->
+                    if (state.bookUri != uri?.toString()) {
+                        isTtsPlaying = false
+                        return@collect
+                    }
+                    isTtsPlaying = state.isPlaying
+                    playbackError = state.errorMessage
+                    val locator = state.currentLocator
+                    if (locator != null && locator != observedPlaybackLocator) {
+                        observedPlaybackLocator = locator
+                        currentVisualNavigator()?.go(locator, animated = false)
+                        (currentNavigatorFragment() as? DecorableNavigator)?.applyDecorations(
+                            listOf(
+                                Decoration(
+                                    id = TTS_DECORATION_ID,
+                                    locator = locator,
+                                    style = Decoration.Style.Highlight(
+                                        tint = android.graphics.Color.YELLOW,
+                                        isActive = true,
+                                    ),
+                                ),
+                            ),
+                            TTS_DECORATION_GROUP,
+                        )
+                    }
+                }
             }
         }
 
@@ -358,9 +384,10 @@ class ReaderActivity : FragmentActivity() {
             playbackError = "Text-to-speech is currently available for EPUB books."
             return
         }
-        val navigator = ttsNavigator
-        if (navigator != null) {
-            if (navigator.playback.value.playWhenReady) navigator.pause() else navigator.play()
+        val uri = intent.getStringExtra(EXTRA_BOOK_URI) ?: return
+        val currentPlayback = PlaybackStateStore.state.value
+        if (currentPlayback.bookUri == uri && currentPlayback.showMiniPlayer) {
+            PlaybackServiceCommands.send(this, PlaybackServiceCommands.ACTION_TOGGLE)
             return
         }
         lifecycleScope.launch {
@@ -375,79 +402,24 @@ class ReaderActivity : FragmentActivity() {
         }
     }
 
-    private suspend fun startTtsAt(locator: Locator?) {
+    private fun startTtsAt(locator: Locator?) {
         if (currentFormat != BookFormat.EPUB) {
             playbackError = "Text-to-speech is currently available for EPUB books."
             return
         }
-        val openedPublication = publication ?: return
+        val uri = intent.getStringExtra(EXTRA_BOOK_URI) ?: return
         playbackError = null
-        val factory = AndroidTtsNavigatorFactory(application, openedPublication)
-        if (factory == null) {
-            playbackError = "This EPUB does not provide readable text for narration."
-            return
-        }
-        val created = try {
-            factory.createNavigator(
-                listener = object : TtsNavigator.Listener {
-                    override fun onStopRequested() {
-                        ttsNavigator?.pause()
-                        isTtsPlaying = false
-                    }
-                },
-                initialLocator = locator,
-                initialPreferences = AndroidTtsPreferences(
-                    speed = AppPreferences.speechRate(this).toDouble(),
-                ),
-            )
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            playbackError = error.message ?: "Could not initialize Android System TTS."
-            return
-        }
-        val navigator = created.getOrElse { error ->
-            playbackError = error.message
-            return
-        }
-        ttsNavigator?.close()
-        ttsNavigator = navigator
-        ttsPlaybackJob?.cancel()
-        ttsLocationJob?.cancel()
-        ttsPlaybackJob = lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                navigator.playback.collect { playback ->
-                    isTtsPlaying = playback.playWhenReady
-                    if (playback.state is MediaNavigator.State.Failure) {
-                        playbackError = "Narration stopped because the Android TTS engine reported an error."
-                    }
-                }
-            }
-        }
-        ttsLocationJob = lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                navigator.location
-                    .map { it.utteranceLocator }
-                    .distinctUntilChanged()
-                    .collect { utteranceLocator ->
-                        currentVisualNavigator()?.go(utteranceLocator, animated = false)
-                        (currentNavigatorFragment() as? DecorableNavigator)?.applyDecorations(
-                            listOf(
-                                Decoration(
-                                    id = TTS_DECORATION_ID,
-                                    locator = utteranceLocator,
-                                    style = Decoration.Style.Highlight(
-                                        tint = android.graphics.Color.YELLOW,
-                                        isActive = true,
-                                    ),
-                                ),
-                            ),
-                            TTS_DECORATION_GROUP,
-                        )
-                    }
-            }
-        }
-        navigator.play()
+        launchPlaybackService(locator)
+    }
+
+    private fun launchPlaybackService(locator: Locator?) {
+        val uri = intent.getStringExtra(EXTRA_BOOK_URI) ?: return
+        PlaybackServiceCommands.start(
+            context = this,
+            bookUri = uri,
+            progressPercent = currentProgress * 100.0,
+            initialLocator = locator,
+        )
     }
 
     private fun seekToProgress(progress: Float) {
@@ -477,7 +449,11 @@ class ReaderActivity : FragmentActivity() {
 
     private fun goToLocator(locator: Locator) {
         currentVisualNavigator()?.go(locator, animated = false)
-        ttsNavigator?.go(locator)
+        val uri = intent.getStringExtra(EXTRA_BOOK_URI)
+        val playback = PlaybackStateStore.state.value
+        if (uri != null && playback.bookUri == uri && playback.showMiniPlayer) {
+            PlaybackServiceCommands.seekToLocator(this, locator)
+        }
     }
 
     private fun goToLink(link: Link) {
@@ -529,11 +505,6 @@ class ReaderActivity : FragmentActivity() {
         append(links)
     }
 
-    override fun onStop() {
-        ttsNavigator?.pause()
-        super.onStop()
-    }
-
     private fun epubPreferences(): EpubPreferences {
         val family = when (AppPreferences.readerFontFamily(this)) {
             ReaderFontFamily.BOOK_DEFAULT -> null
@@ -554,10 +525,6 @@ class ReaderActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
-        ttsPlaybackJob?.cancel()
-        ttsLocationJob?.cancel()
-        ttsNavigator?.close()
-        ttsNavigator = null
         currentSearch?.close()
         currentSearch = null
         publication?.close()

@@ -38,6 +38,11 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.SkipPrevious
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -62,6 +67,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -95,6 +101,8 @@ import com.geneing.epubreader.data.AppPreferences
 import com.geneing.epubreader.data.ReaderFontFamily
 import com.geneing.epubreader.data.SpeechEngine
 import com.geneing.epubreader.data.ThemeMode
+import com.geneing.epubreader.playback.PlaybackServiceCommands
+import com.geneing.epubreader.playback.PlaybackUiState
 import com.geneing.epubreader.reader.ReaderActivity
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -171,6 +179,17 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
         ) {
             Scaffold(
                 snackbarHost = { SnackbarHost(snackbarHostState) },
+                bottomBar = {
+                    if (state.playback.showMiniPlayer) {
+                        PlaybackMiniPlayer(
+                            playback = state.playback,
+                            onSkipBack = { PlaybackServiceCommands.send(context, PlaybackServiceCommands.ACTION_SKIP_BACK) },
+                            onToggle = { PlaybackServiceCommands.send(context, PlaybackServiceCommands.ACTION_TOGGLE) },
+                            onSkipForward = { PlaybackServiceCommands.send(context, PlaybackServiceCommands.ACTION_SKIP_FORWARD) },
+                            onStop = { PlaybackServiceCommands.send(context, PlaybackServiceCommands.ACTION_STOP) },
+                        )
+                    }
+                },
                 topBar = {
                     CenterAlignedTopAppBar(
                         navigationIcon = {
@@ -317,12 +336,18 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                         readerFontScale = state.readerFontScale,
                         speechEngine = state.speechEngine,
                         speechRate = state.speechRate,
+                        playbackGraceMinutes = state.playbackGraceMinutes,
+                        resumeOnBluetoothReconnect = state.resumeOnBluetoothReconnect,
+                        resumeAfterLongInterruption = state.resumeAfterLongInterruption,
                         innerPadding = innerPadding,
                         onThemeModeSelected = viewModel::setThemeMode,
                         onFontFamilySelected = viewModel::setReaderFontFamily,
                         onFontScaleChanged = viewModel::setReaderFontScale,
                         onSpeechEngineSelected = viewModel::setSpeechEngine,
                         onSpeechRateChanged = viewModel::setSpeechRate,
+                        onPlaybackGraceMinutesChanged = viewModel::setPlaybackGraceMinutes,
+                        onResumeOnBluetoothReconnectChanged = viewModel::setResumeOnBluetoothReconnect,
+                        onResumeAfterLongInterruptionChanged = viewModel::setResumeAfterLongInterruption,
                     )
                 }
             }
@@ -558,12 +583,18 @@ private fun SettingsContent(
     readerFontScale: Float,
     speechEngine: SpeechEngine,
     speechRate: Float,
+    playbackGraceMinutes: Int,
+    resumeOnBluetoothReconnect: Boolean,
+    resumeAfterLongInterruption: Boolean,
     innerPadding: androidx.compose.foundation.layout.PaddingValues,
     onThemeModeSelected: (ThemeMode) -> Unit,
     onFontFamilySelected: (ReaderFontFamily) -> Unit,
     onFontScaleChanged: (Float) -> Unit,
     onSpeechEngineSelected: (SpeechEngine) -> Unit,
     onSpeechRateChanged: (Float) -> Unit,
+    onPlaybackGraceMinutesChanged: (Int) -> Unit,
+    onResumeOnBluetoothReconnectChanged: (Boolean) -> Unit,
+    onResumeAfterLongInterruptionChanged: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     BoxWithConstraints(
@@ -654,6 +685,134 @@ private fun SettingsContent(
                             runCatching { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
                         },
                     ) { Text("Manage voices and engines") }
+                }
+            }
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Playback and Bluetooth", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Playback controls stay available briefly after pausing. Bluetooth and audio-focus behavior follows these preferences.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = if (playbackGraceMinutes == 0) {
+                            "Mini-player and notification grace · Off"
+                        } else {
+                            "Mini-player and notification grace · $playbackGraceMinutes min"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Slider(
+                        value = playbackGraceMinutes.toFloat(),
+                        onValueChange = { onPlaybackGraceMinutesChanged(it.toInt()) },
+                        valueRange = AppPreferences.MIN_PLAYBACK_GRACE_MINUTES.toFloat()..AppPreferences.MAX_PLAYBACK_GRACE_MINUTES.toFloat(),
+                        steps = AppPreferences.MAX_PLAYBACK_GRACE_MINUTES - 1,
+                    )
+                    PreferenceSwitchRow(
+                        title = "Resume when Bluetooth reconnects",
+                        description = "Off by default. Resume only if playback was paused when a headset or car audio disconnected.",
+                        checked = resumeOnBluetoothReconnect,
+                        onCheckedChange = onResumeOnBluetoothReconnectChanged,
+                    )
+                    PreferenceSwitchRow(
+                        title = "Resume after long interruptions",
+                        description = "Short interruptions resume automatically. When enabled, also resume after a long audio-focus interruption such as a phone call.",
+                        checked = resumeAfterLongInterruption,
+                        onCheckedChange = onResumeAfterLongInterruptionChanged,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreferenceSwitchRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun PlaybackMiniPlayer(
+    playback: PlaybackUiState,
+    onSkipBack: () -> Unit,
+    onToggle: () -> Unit,
+    onSkipForward: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val coverBitmap by produceState<Bitmap?>(initialValue = null, playback.coverPath) {
+        value = playback.coverPath?.let { path ->
+            withContext(Dispatchers.IO) { BitmapFactory.decodeFile(path) }
+        }
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (coverBitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = coverBitmap!!.asImageBitmap(),
+                        contentDescription = "Cover of ${playback.title}",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
+                    )
+                } else {
+                    Icon(Icons.Outlined.Book, contentDescription = null, modifier = Modifier.size(48.dp).padding(10.dp))
+                }
+                Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                    Text(playback.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${playback.author?.takeIf(String::isNotBlank)?.let { "$it · " } ?: ""}${(playback.progress * 100).toInt()}% read",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = onStop) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Stop playback and close mini-player")
+                }
+            }
+            LinearProgressIndicator(
+                progress = { playback.progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onSkipBack) {
+                    Icon(Icons.Outlined.SkipPrevious, contentDescription = "Previous sentence")
+                }
+                IconButton(onClick = onToggle) {
+                    Icon(
+                        if (playback.isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                        contentDescription = if (playback.isPlaying) "Pause playback" else "Resume playback",
+                    )
+                }
+                IconButton(onClick = onSkipForward) {
+                    Icon(Icons.Outlined.SkipNext, contentDescription = "Next sentence")
                 }
             }
         }

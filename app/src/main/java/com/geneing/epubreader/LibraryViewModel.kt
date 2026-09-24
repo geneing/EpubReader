@@ -13,6 +13,9 @@ import com.geneing.epubreader.data.ReaderFontFamily
 import com.geneing.epubreader.data.SpeechEngine
 import com.geneing.epubreader.data.ThemeMode
 import com.geneing.epubreader.reader.ReadiumPublicationLoader
+import com.geneing.epubreader.playback.PlaybackStateStore
+import com.geneing.epubreader.playback.PlaybackUiState
+import com.geneing.epubreader.playback.PlaybackServiceCommands
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +37,10 @@ data class LibraryUiState(
     val readerFontScale: Float = AppPreferences.DEFAULT_FONT_SCALE,
     val speechEngine: SpeechEngine = SpeechEngine.ANDROID_SYSTEM,
     val speechRate: Float = AppPreferences.DEFAULT_SPEECH_RATE,
+    val playbackGraceMinutes: Int = AppPreferences.DEFAULT_PLAYBACK_GRACE_MINUTES,
+    val resumeOnBluetoothReconnect: Boolean = false,
+    val resumeAfterLongInterruption: Boolean = false,
+    val playback: PlaybackUiState = PlaybackUiState(),
 )
 
 private data class ReaderSettingsState(
@@ -42,6 +49,9 @@ private data class ReaderSettingsState(
     val fontScale: Float,
     val speechEngine: SpeechEngine,
     val speechRate: Float,
+    val playbackGraceMinutes: Int,
+    val resumeOnBluetoothReconnect: Boolean,
+    val resumeAfterLongInterruption: Boolean,
 )
 
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
@@ -55,12 +65,15 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             fontScale = AppPreferences.readerFontScale(application),
             speechEngine = AppPreferences.speechEngine(application),
             speechRate = AppPreferences.speechRate(application),
+            playbackGraceMinutes = AppPreferences.playbackGraceMinutes(application),
+            resumeOnBluetoothReconnect = AppPreferences.resumeOnBluetoothReconnect(application),
+            resumeAfterLongInterruption = AppPreferences.resumeAfterLongInterruption(application),
         ),
     )
     private val mutableBusyKeys = MutableStateFlow<Set<String>>(emptySet())
     private val mutableMessage = MutableStateFlow<String?>(null)
 
-    val state: StateFlow<LibraryUiState> = combine(
+    private val libraryState: StateFlow<LibraryUiState> = combine(
         repository.observeFolders(),
         repository.observeBooks(),
         mutableBusyKeys,
@@ -77,7 +90,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             readerFontScale = settings.fontScale,
             speechEngine = settings.speechEngine,
             speechRate = settings.speechRate,
+            playbackGraceMinutes = settings.playbackGraceMinutes,
+            resumeOnBluetoothReconnect = settings.resumeOnBluetoothReconnect,
+            resumeAfterLongInterruption = settings.resumeAfterLongInterruption,
         )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryUiState())
+    val state: StateFlow<LibraryUiState> = combine(libraryState, PlaybackStateStore.state) { library, playback ->
+        library.copy(playback = playback)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryUiState())
 
     fun addFolder(uri: Uri) = launchOperation("add-folder") {
@@ -175,6 +194,26 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         if (mutableSettings.value.speechRate == boundedRate) return
         AppPreferences.setSpeechRate(getApplication(), boundedRate)
         mutableSettings.value = mutableSettings.value.copy(speechRate = boundedRate)
+    }
+
+    fun setPlaybackGraceMinutes(minutes: Int) {
+        val bounded = minutes.coerceIn(AppPreferences.MIN_PLAYBACK_GRACE_MINUTES, AppPreferences.MAX_PLAYBACK_GRACE_MINUTES)
+        if (mutableSettings.value.playbackGraceMinutes == bounded) return
+        AppPreferences.setPlaybackGraceMinutes(getApplication(), bounded)
+        mutableSettings.value = mutableSettings.value.copy(playbackGraceMinutes = bounded)
+        PlaybackServiceCommands.refreshSettings(getApplication())
+    }
+
+    fun setResumeOnBluetoothReconnect(enabled: Boolean) {
+        if (mutableSettings.value.resumeOnBluetoothReconnect == enabled) return
+        AppPreferences.setResumeOnBluetoothReconnect(getApplication(), enabled)
+        mutableSettings.value = mutableSettings.value.copy(resumeOnBluetoothReconnect = enabled)
+    }
+
+    fun setResumeAfterLongInterruption(enabled: Boolean) {
+        if (mutableSettings.value.resumeAfterLongInterruption == enabled) return
+        AppPreferences.setResumeAfterLongInterruption(getApplication(), enabled)
+        mutableSettings.value = mutableSettings.value.copy(resumeAfterLongInterruption = enabled)
     }
 
     fun dismissMessage() {

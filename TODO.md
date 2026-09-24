@@ -23,8 +23,8 @@ This is the long-term actionable backlog. `Progress.md` tracks the active milest
 - [ ] Persist library metadata, SAF URIs, Readium locators, per-book speech preferences, and bookmarks in Room. (Library metadata, derived covers, and percentage progress persist; full serialized locators, per-book speech preferences, and bookmarks remain.)
 - [ ] Implement Library/Home, Book Details/TOC, EPUB Reader, PDF Reader, Settings, and Bookmarks screens in Compose. (Library/recent/all files, folder management/detail, EPUB/PDF readers, global Settings, reader TOC/search/navigation controls are implemented; Book Details and bookmarks remain.)
 - [ ] Implement text-based PDF page/reflow modes and report unreadable/scanned PDFs clearly without OCR.
-- [ ] Add background narration with MediaSessionService, notification/lock-screen controls, audio focus, headset controls, and playback state restoration.
-- [ ] Add the mini-player, background sentence/chapter navigation, and per-book engine/voice selection. (Reader playback has global speed control and foreground utterance navigation.)
+- [ ] Complete and device-verify background narration with MediaSessionService, lock-screen/car controls, audio focus, headset handling, and lifecycle restoration. (Service/session, foreground notification, focus arbitration, and route handling are implemented; AVD and Bluetooth/car verification remain.)
+- [ ] Complete the mini-player and per-book engine/voice selection. (A grace-period library mini-player with play/pause, utterance skip, stop, cover, and progress is implemented; background chapter navigation and per-book speech preferences remain.)
 - [ ] Add a lifecycle-independent sleep timer and persist its deadline.
 - [ ] Implement production Pocket model management (download/update/verify/delete) in addition to debug ADB provisioning.
 - [ ] Complete accessibility, font scaling, traditional inset-safe UI, phone/tablet adaptive layouts, and Android 17 beta compatibility checks.

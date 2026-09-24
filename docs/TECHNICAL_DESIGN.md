@@ -132,9 +132,10 @@ If Pocket's Android system-service path proves unsuitable for in-process selecti
 
 ### Background playback
 
-- Use Media3 MediaSession/MediaSessionService for a consistent playback notification, lock-screen controls, and external media controls; verify Readium media/TTS navigator support in the pinned version.
+- Use Media3 MediaSession/MediaSessionService for a consistent playback notification, lock-screen controls, and external media controls. The pinned Readium Android TTS navigator adapts to Media3 `Player`, allowing its session to drive notification, headset, and automotive commands; validate these surfaces on device.
 - Declare required foreground service type (`mediaPlayback`) and notification permissions/behavior for supported Android APIs.
-- Request/abandon audio focus; handle transient/permanent focus changes and route/device changes. Wire play/pause/next/previous commands into the same playback owner used by the UI.
+- Request/abandon audio focus in the service (the Readium Android TTS player does not arbitrate focus itself); pause on transient loss, resume short interruptions only after focus gain, and gate longer transient interruptions behind a setting. Pause on wired/Bluetooth disconnect; Bluetooth reconnect resume is opt-in and requires that playback was active before disconnect. Generic in-ear detection is not portable.
+- Wire play/pause/utterance skip/stop commands into the same playback owner used by the UI. Show media metadata and book progress for notification/lock-screen/car surfaces; device behavior remains a verification task.
 - Sleep timer is a playback use case with lifecycle-independent persisted deadline, not a UI-screen timer. Persist/restore the deadline and stop cleanly at expiry.
 - Ensure one active speech request at a time. A new utterance cancels the old request; stop/pause cancels queued/generating audio according to provider semantics.
 
@@ -194,8 +195,8 @@ Use Readium locator serialization rather than relying on page number/string offs
 
 1. Bootstrap Compose app, version catalog, API 36 baseline, CI/build checks, and app navigation shell.
 2. Integrate Readium EPUB/PDF parsing and navigators; implement SAF folder registry, persisted tree grants, in-place URI reading, lazy metadata/cover caching, Room library/progress, and percentage-based position restoration. Validate on AVD before adding device-specific work.
-3. Foreground Readium TTS with Android System TTS, selected-locator start, and spoken-text highlight is integrated; continue voice/cancellation checks and add the MediaSessionService/background path.
-4. Add MediaSessionService/background controls, audio focus, headset commands, and persistent sleep timer.
+3. Readium TTS with Android System TTS, selected-locator start, and spoken-text highlighting is integrated. Background playback, MediaSessionService, notification/lock-screen/car commands, audio focus, and Bluetooth handling are implemented; validate on API 36 AVD and real routes, then continue voice/cancellation checks.
+4. Add a persistent sleep timer and validate restoration/service teardown under process death.
 5. The PDFium navigator is integrated and renders the supplied searchable-text fixture. Continue proving text extraction/reflow/narration mapping on varied PDFs before making PDF TTS or synchronized-highlighting claims.
 6. Pin Pocket TTS; add a host-to-Pixel 10 ADB model provisioning workflow and persistent device cache; wire model state/attribution and Android service provider; test install size, native memory, first-audio latency, offline use, voice switching, and cancellation on Pixel 10. Keep all non-inference work on AVD.
 7. Finish library/reader/preferences/bookmarks UX, accessibility, error states, and device coverage.
