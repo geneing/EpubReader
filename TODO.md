@@ -4,24 +4,24 @@ This is the long-term actionable backlog. `Progress.md` tracks the active milest
 
 ## Foundation and technical spikes
 
-- [ ] Create the Android project/modules with the current mutually compatible stable Kotlin, Compose, AGP, Gradle, and SDK toolchain.
+- [x] Bootstrap the Android app module with pinned Kotlin, Compose, AGP, Gradle, API 36 target/minimum, and Compose-required API 37 compile SDK.
 - [ ] Create a host AVD baseline (API 36, Google Play image where needed) and document repeatable launch/test commands.
-- [ ] Prototype SAF folder registration with persistable tree grants and list/refresh local EPUB/PDF files without copying.
-- [ ] Verify Readium opens a book directly from a persisted SAF `content://` URI and restores the saved locator after process restart.
-- [ ] Integrate the Readium EPUB navigator into the Compose shell and validate safe drawing insets on cutout/navigation configurations.
+- [ ] Prototype SAF folder registration with persistable tree grants and list/refresh local EPUB/PDF files without copying. (Basic flow verified on API 37 AVD; repeat on API 36.)
+- [ ] Verify Readium opens a book directly from a persisted SAF `content://` URI and restores the saved locator after process restart. (Direct URI open verified; locator restoration remains.)
+- [ ] Integrate Readium EPUB/PDF navigators into the Compose shell and validate safe drawing insets on cutout/navigation configurations. (Both formats open on API 37 AVD; percentage resume and the basic inset layout are verified; device matrix remains.)
 - [ ] Verify Android System TTS in the host AVD, including voice setup, utterance callbacks, cancellation, and audio routed to host speakers.
 - [ ] Spike Readium TTS + Android System TTS sentence highlighting and resume behavior.
-- [ ] Evaluate Readium PDFium support and prove extraction/reflow/locator mapping on representative text PDFs; document scanned PDF handling (no OCR in MVP).
+- [ ] Evaluate Readium PDFium support and prove extraction/reflow/locator mapping on representative text PDFs; document scanned PDF handling (no OCR in MVP). (Pinned 3.3.0 adapter renders the supplied searchable PDF; PDF TTS/locator mapping and native-library release audit remain.)
 - [ ] Pin an audited PocketTTS-LiteRT revision and confirm a host-generated/downloaded model pack can be installed via ADB on Pixel 10.
 - [ ] Add a repeatable host-to-Pixel 10 model provisioning command with hash verification and persistent app-specific model caching.
 - [ ] Validate Pocket service discovery/engine selection through the Readium TTS path and benchmark first audio, memory, cancellation, and offline use on Pixel 10.
 
 ## MVP application
 
-- [ ] Build the SAF folder registry: add/remove folders, persist grants, show access state, scan/refresh with progress, identify stale/missing items, and deduplicate safely.
-- [ ] Add individual-document picker and share/open intent support alongside folder registration.
-- [ ] Persist library metadata, SAF URIs, Readium locators, per-book speech preferences, and bookmarks in Room.
-- [ ] Implement Library/Home, Book Details/TOC, EPUB Reader, PDF Reader, Settings, and Bookmarks screens in Compose.
+- [ ] Build out the SAF folder registry: add/remove folders, persist grants, show access state, scan/refresh with progress, identify stale/missing items, and deduplicate safely. (Basic folder scan/persistence is implemented.)
+- [ ] Add individual-document share/open intent support alongside the implemented single-file picker.
+- [ ] Persist library metadata, SAF URIs, Readium locators, per-book speech preferences, and bookmarks in Room. (Library metadata, derived covers, and percentage progress persist; full serialized locators, per-book speech preferences, and bookmarks remain.)
+- [ ] Implement Library/Home, Book Details/TOC, EPUB Reader, PDF Reader, Settings, and Bookmarks screens in Compose. (Library/recent/all files, folder management/detail, EPUB/PDF readers, and global Settings are implemented; TOC/bookmarks remain.)
 - [ ] Implement text-based PDF page/reflow modes and report unreadable/scanned PDFs clearly without OCR.
 - [ ] Add background narration with MediaSessionService, notification/lock-screen controls, audio focus, headset controls, and playback state restoration.
 - [ ] Add the mini-player, sentence/chapter navigation, rate controls, and per-book engine/voice selection.

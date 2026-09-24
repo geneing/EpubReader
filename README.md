@@ -25,4 +25,6 @@ Development is centered on host AVDs using Android System TTS. A physical Pixel 
 
 ## Current status
 
-Design and planning stage. The repository currently contains project documentation and a BSD-3-Clause license; Android application modules have not yet been created.
+Initial Android implementation is underway on `feature/android-saf-library`. The Compose app now has a SAF-backed library, recent/all-files and folder views, a Settings screen, and Readium EPUB/PDF readers. System TTS playback and Pocket TTS integration are the next milestones.
+
+Manual EPUB/PDF reader fixtures and their source notes are in [`tests/`](tests/README.md).

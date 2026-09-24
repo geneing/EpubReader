@@ -5,7 +5,7 @@
 - Build an Android-first EPUB/PDF TTS reader. Treat `docs/PRODUCT_DESIGN.md` and `docs/TECHNICAL_DESIGN.md` as the product and architecture references.
 - Support DRM-free EPUB 2/3 and unencrypted, text-based PDF. Image-only/scanned PDF OCR is out of the initial scope.
 - The only supported narration providers are Android system TTS and Pocket TTS LiteRT from `geneing/PocketTTS-LiteRT`. Do not add cloud speech providers or translation without a product decision.
-- The first supported OS version is Android 16 / API 36. The compile and target SDK should use the latest stable Android SDK available when implementation is performed. Do not target an Android preview SDK for production builds.
+- The first supported OS version is Android 16 / API 36. Keep `minSdk` and `targetSdk` on the latest stable Android release; use a newer preview `compileSdk` only when the selected stable AndroidX/Compose libraries require it. Do not opt users into preview runtime behavior by setting a preview `targetSdk` for production builds.
 - The product name in project documentation is **EpubReader** until changed by the owner.
 
 ## Technology and dependency policy

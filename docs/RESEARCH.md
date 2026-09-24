@@ -1,6 +1,6 @@
 # Research notes
 
-**Checked:** 2026-09-23
+**Checked:** 2026-09-24
 
 **Purpose:** Scope and technology baseline for EpubReader, using Evie/eVoice Reader as a product reference.
 
@@ -34,7 +34,7 @@ Versions change frequently. These are dated observations and must be rechecked b
 | Android Gradle Plugin | 9.4.0 stable; Quail 4 supports AGP up to 9.4 | [AGP release compatibility](https://developer.android.com/build/releases/about-agp). Use the compatible Gradle required by selected AGP. |
 | Kotlin | 2.4.20 latest stable, per Kotlin release page updated 2026-09-09 | [Kotlin releases](https://kotlinlang.org/docs/releases.html). Validate against Readium/Compose plugins. |
 | Android OS SDK | Android 16 / API 36 is stable; Android 17 / API 37 is in beta (Beta 4.1 in latest-updates snapshot) | [Android 16](https://developer.android.com/about/versions/16), [Android 17](https://developer.android.com/about/versions/17/summary), [latest updates](https://developer.android.com/latest-updates). Product owner selected Android 16+ as the minimum, so API 36 is the initial minSdk baseline; use the latest stable compile/target SDK at implementation time. |
-| Compose | Use current stable Jetpack Compose through the Compose BOM; no exact stable BOM number is frozen in this document | [Compose release notes](https://developer.android.com/jetpack/androidx/releases/compose), [Compose BOM](https://developer.android.com/jetpack/androidx/compose-bom). Check official release pages at project bootstrap. |
+| Compose | Stable Compose BOM 2026.09.00, required to use the current stable Compose libraries | [Compose release notes](https://developer.android.com/jetpack/androidx/releases/compose), [Compose BOM](https://developer.android.com/develop/ui/compose/bom/bom-mapping). Its resolved artifacts require compile SDK 37; min/target remain API 36. |
 | Readium Kotlin Toolkit | 3.3.0 was the latest listed stable release | [Readium releases](https://github.com/readium/kotlin-toolkit/releases), [3.3.0 docs](https://readium.org/kotlin-toolkit/3.3.0/). The docs state Readium is low-level; its TTS navigator supports any publication with a ContentService. |
 | Pocket TTS-LiteRT | `geneing/PocketTTS-LiteRT` main branch is an active, MIT-licensed Android project with `pockettts-core`, `pockettts-service`, and `app` modules | [Repository](https://github.com/geneing/PocketTTS-LiteRT), [library guide](https://github.com/geneing/PocketTTS-LiteRT/blob/main/docs/library.md), [agent/build notes](https://github.com/geneing/PocketTTS-LiteRT/blob/main/AGENTS.md). Pin a commit; do not consume mutable main in a release build. |
 
@@ -45,6 +45,8 @@ Versions change frequently. These are dated observations and must be rechecked b
 - The Readium guide's capability table reports EPUB TTS as implemented and PDF TTS as a less-complete/desired capability. Prove PDF extraction-to-locator mapping before promising EPUB-equivalent synchronized speech.
 - Readium's current visual navigators are Android Fragments; newer Jetpack Compose Web Navigators are documented as alpha. Compose can still be the app shell around stable visual navigators.
 - The Android 17 preview SDK is not the product minimum and should not be necessary for release builds.
+- The Compose BOM 2026.09.00 stable snapshot resolves Compose 1.12.1 artifacts that require compile SDK 37. The project can compile against API 37 while keeping `targetSdk`/`minSdk` at stable API 36; reassess once Android 17 is stable and the preview compile dependency is no longer needed.
+- Readium 3.3.0's PDFium adapter renders searchable text PDFs with `PdfNavigatorFragment`. Its `AndroidPdfViewer` 3.2.8 and `PdfiumAndroid` 1.9.8 dependencies come from JitPack; Readium describes PdfiumAndroid as unmaintained. Rendering was smoke-tested against the supplied four-page PDF on API 37, but PDF TTS/text-to-locator mapping and native-library release compatibility still need validation. See the [adapter setup and limitations](https://github.com/readium/kotlin-toolkit/blob/3.3.0/readium/adapters/pdfium/README.md) and [AndroidPdfViewer 3.2.8](https://github.com/marain87/AndroidPdfViewer).
 - Android 16-targeting apps cannot opt out of edge-to-edge on Android 16 devices. EpubReader should therefore use a conventional safe-area visual layout while correctly handling enforced window insets; edge-to-edge background drawing is not a requirement for reader content or controls. See [edge-to-edge views guidance](https://developer.android.com/develop/ui/views/layout/edge-to-edge) and [Android 16 target behavior changes](https://developer.android.com/about/versions/16/behavior-changes-16).
 
 ## 3. Pocket TTS/LiteRT findings

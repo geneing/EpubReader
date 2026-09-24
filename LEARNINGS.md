@@ -14,6 +14,14 @@ Record durable decisions, discoveries, integration constraints, and bugs/pitfall
 - **Readium PDF narration needs a technical spike.** EPUB has a clearer structural/locator path; PDF reading order and mapping extracted utterances back to pages may be imperfect. Scanned PDFs have no extracted text and OCR is excluded from MVP.
 - **Pocket TTS requirements:** upstream currently advertises English preset voices and large model packs (roughly 160–225 MB depending on variant). Verify the pinned revision's model files, supported devices, and CC-BY/CC0 notices before distribution.
 - **Git workflow:** do feature work on focused branches and create small reviewable commits. Inspect status and staged diff before each checkpoint; never commit model files, books, audio, SDK paths, or build output.
+- **Initial build stack:** AGP 9.4.0's built-in Kotlin/new DSL path currently conflicts with applying the standalone Kotlin Android Gradle plugin 2.4.20. The app temporarily opts out of both AGP features to keep the requested latest Kotlin compiler; those opt-outs are deprecated and should be removed after compatible support lands.
+- **Compose compile SDK:** Stable Compose BOM 2026.09.00 artifacts require compile SDK 37. Keep min/target at stable API 36 and compile at 37 until Android 17 stabilizes or the requirement changes.
+- **Readium URI integration:** Readium 3.3.0's `AssetRetriever(ContentResolver, HttpClient)` and `Uri.toAbsoluteUrl()` opened a generated EPUB directly from the persisted SAF tree URI on the API 37 AVD. `Try.getOrElse` is a Readium extension and must be imported from `org.readium.r2.shared.util`.
+- **Readium navigator lifecycle:** The EPUB navigator is a Fragment and requires its `FragmentFactory` before adding/restoring the fragment. The initial reader returns to the library after Activity recreation because the live `Publication` is not yet process-restored; locator persistence is the next reader milestone.
+- **PDFium adapter dependency:** Readium's 3.3.0 PDF adapter resolves `com.github.marain87:AndroidPdfViewer:3.2.8` and `PdfiumAndroid:1.9.8` from JitPack, so the repository needs a pinned JitPack repository in dependency resolution. The upstream adapter calls PdfiumAndroid unmaintained; keep the boundary replaceable and verify modern Android native/page-size support before release.
+- **Book-list enrichment:** Readium `Publication.coverFitting(Size)` and publication metadata can be extracted after opening a SAF URI. Cache only a small derived WebP cover under app files and persist its path; lazy-load visible rows so a large folder scan does not parse every whole book synchronously.
+- **Reading percentage:** `Navigator.currentLocator.locations.totalProgression` supports live percentage updates. `Publication.locateProgression()` restores the saved percentage; this is a useful initial resume point, but exact locator JSON is still needed for precise restoration.
+- **Reader preferences:** Readium EPUB navigator supports `EpubPreferences` for font family, type scale, and light/dark theme. The app's global mode also updates Android system-bar icon contrast. Android System TTS voice/engine setup belongs in Android's TTS settings; the app still needs to connect stored rate/provider choices to a playback owner.
 
 ## Bugs and pitfalls to avoid
 
@@ -25,3 +33,4 @@ Record durable decisions, discoveries, integration constraints, and bugs/pitfall
 - Do not assume AVD GPU/NPU behavior predicts Pocket TTS performance on the Pixel 10.
 - Do not re-upload/re-download model weights for every test run, and do not put model artifacts in the APK or Git.
 - Do not claim synchronized PDF sentence highlighting until extraction-order and locator mapping are validated.
+- Keep SAF scanning off the main thread; DocumentFile/provider enumeration may block or fail while a provider is unavailable.
