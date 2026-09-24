@@ -2,7 +2,7 @@
 
 Record durable decisions, discoveries, integration constraints, and bugs/pitfalls to avoid. Date entries and revise them when verified implementation results supersede current assumptions.
 
-## Decisions and discoveries (2026-09-23)
+## Decisions and discoveries (2026-09-23–24)
 
 - **Book access uses SAF URIs; do not copy books.** Register user-selected directories via `ACTION_OPEN_DOCUMENT_TREE`, persist read grants, and read documents directly from `content://` URIs. Removing a library record must never delete/move the source. Missing/revoked grants must preserve progress and offer a recovery action.
 - **Prefer on-device book folders for offline reliability.** SAF can expose providers with network or removable-media dependencies; their availability is outside the app's control. Do not promise offline access for every URI.

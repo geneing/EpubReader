@@ -6,7 +6,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 
 - **Stage:** Initial Android implementation.
 - **Active branch:** `feature/android-saf-library`.
-- **Current milestone:** Complete the first library/reader experience with SAF folders, EPUB/PDF viewing, and user-facing settings.
+- **Current milestone:** Implement narration and reliable reading-position restoration on top of the first library/reader experience.
 - **Device strategy:** Host AVD is the default for UI, SAF, lifecycle, and Android System TTS. Pixel 10 is reserved for real Pocket TTS/LiteRT inference and performance.
 
 ## Completed
@@ -42,8 +42,8 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 ## Blockers / pending verification
 
 - Readium PDF extraction/TTS locator mapping must be proven with representative PDFs.
-- Exact Readium/Pocket integration versions and the Pocket model artifact/release URL must be pinned and verified at implementation time.
+- Readium 3.3.0 is pinned and its basic EPUB/PDF rendering is verified on API 37. The Pocket TTS revision and model artifact/release URL still need to be pinned and verified.
 - SAF folder accessibility depends on Android's picker and the document provider; the basic local-folder grant and scan flow worked on the API 37 AVD. Repeat on API 36 and document provider constraints.
-- Readium 3.3.0 opened a generated EPUB directly through a persisted `content://` URI on the API 37 AVD. Locator persistence and process restoration remain unimplemented.
+- Readium 3.3.0 opened the supplied EPUB fixtures directly through persisted `content://` URIs on the API 37 AVD. Percentage-based progress restores the PDF page position; serialized Readium locator persistence and reader process restoration remain unimplemented.
 - The supplied searchable PDF renders and resumes at the saved percentage with Readium's PDFium adapter. No PDF OCR, TTS text extraction, or synchronized highlighting has been validated.
 - AGP 9.4 currently requires opting out of its new DSL to use Kotlin 2.4.20's external Android plugin. The opt-out is deprecated and must be revisited when AGP/Kotlin plugin compatibility improves.

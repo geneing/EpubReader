@@ -1,6 +1,6 @@
 # EpubReader — Technical design
 
-**Status:** Proposed architecture
+**Status:** Architecture reference; first implementation checkpoint completed on 2026-09-24
 
 **Updated:** 2026-09-24
 
@@ -12,7 +12,15 @@
 - Java bytecode baseline: 17, subject to Readium/Pocket TTS integration requirements.
 - Use version catalog (`gradle/libs.versions.toml`) as the single dependency version source. Use the Compose BOM for Compose library alignment. Avoid unbounded/dynamic versions.
 
-The version numbers above are a dated baseline, not a promise that they will remain latest. Before the first application build, re-check current official release channels and validate that Readium and Pocket TTS build together.
+The version numbers above are a dated baseline, not a promise that they will remain latest. Re-check current official release channels before major dependency upgrades or release, and validate Readium/Pocket compatibility.
+
+### Current implementation snapshot
+
+- The app is currently a single `:app` Compose module. Its version catalog pins Kotlin 2.4.20, AGP 9.4.0, Gradle 9.7.1, Compose BOM 2026.09.00, Readium 3.3.0, and PDFium adapter 3.3.0. `minSdk`/`targetSdk` are API 36; Compose currently requires `compileSdk` 37.
+- Room stores SAF folder/book URIs, publication metadata, added/opened dates, a derived cover path, and reading percentage. Readium metadata and cover extraction is lazy for visible library rows. Original book files remain at the SAF URI.
+- The first UI has recent/all files, recent/all folders, folder contents, and global Settings routes. Theme, EPUB font family/scale, speech engine selection, and speech-rate preferences are persisted globally.
+- EPUB and PDF visual navigators have been manually exercised on an API 37 AVD with the project test fixtures. Resume currently uses Readium's total progression percentage, not a serialized `Locator`.
+- TTS playback, per-book speech preferences, background media controls, exact locator persistence, bookmarks, and Pocket TTS are not implemented yet. Pocket is shown as unavailable in Settings until its engine is integrated.
 
 ## 2. High-level architecture
 
