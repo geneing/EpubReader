@@ -1,6 +1,6 @@
 # EpubReader
 
-An Android EPUB and PDF reader in active development, with background text-to-speech narration as a planned capability. The product takes interaction cues from Evie / eVoice Reader while using its own name, visual identity, and implementation.
+An Android EPUB and PDF reader in active development, with text-to-speech narration. The product takes interaction cues from Evie / eVoice Reader while using its own name, visual identity, and implementation.
 
 ## Product scope
 
@@ -25,6 +25,6 @@ Development is centered on host AVDs using Android System TTS. A physical Pixel 
 
 ## Current status
 
-Initial Android implementation is on `feature/android-saf-library`. The Compose app has a SAF-backed library, recent/all-files and folder views, global reading settings, and Readium EPUB/PDF readers. Speech provider settings are a UI shell; actual System TTS playback and Pocket TTS integration are still upcoming.
+Initial Android implementation is on `feature/android-saf-library`. The Compose app has a SAF-backed library, recent/all-files and folder views, global reading settings, and Readium EPUB/PDF readers. Android System TTS can narrate EPUBs in the foreground with selection-based start and spoken-text highlighting; background/media-session playback and Pocket TTS remain upcoming. PDF narration is not implemented.
 
 Manual EPUB/PDF reader fixtures and their source notes are in [`tests/`](tests/README.md).

@@ -6,7 +6,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 
 - **Stage:** Initial Android implementation.
 - **Active branch:** `feature/android-saf-library`.
-- **Current milestone:** Implement narration and reliable reading-position restoration on top of the first library/reader experience.
+- **Current milestone:** Complete reader playback/navigation polish and make reading position reliable across process recreation.
 - **Device strategy:** Host AVD is the default for UI, SAF, lifecycle, and Android System TTS. Pixel 10 is reserved for real Pocket TTS/LiteRT inference and performance.
 
 ## Completed
@@ -30,20 +30,23 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - [x] Added Readium PDFium 3.3.0 rendering. Verified both supplied EPUBs and the searchable four-page PDF on the API 37 AVD; PDF page 2 reopened after saving 50% progress.
 - [x] Added the user-provided EPUB/PDF fixtures under `tests/` with embedded-source/licensing notes in `tests/README.md`.
 - [x] Verified dark appearance survives app relaunch and added the Room v1→v2→v3→v4 migrations for open date, book metadata, cover/progress, and metadata-load state.
+- [x] Upgraded Readium and its PDFium adapter to 3.4.0. Configured PDFium to retain continuous scrolling after the upstream default changed to paginated; verified page display and page selection on API 37.
+- [x] Added reader controls for Android System TTS on EPUB, long-press “Read from here” text selection, spoken-text highlighting/follow-along, page/location scrubbing and jump, table of contents, and full-publication search.
+- [x] Verified on the API 37 AVD that EPUB speech invokes Android System TTS, selection starts narration at the selected text, search navigates to a match, TOC selection works, and the PDF page picker jumps to page 1. PDF speech is unavailable until PDF text-to-locator support is validated.
 
 ## Immediate next steps
 
 1. Repeat the library, appearance, EPUB, and PDF smoke tests on a stable API 36 AVD and test the window-inset matrix.
 2. Replace percentage-only restoration with persisted Readium locator JSON and validate process recreation.
-3. Add Android System TTS narration through Readium's TTS path; connect the stored engine/rate settings and verify AVD voice/cancellation behavior.
+3. Verify System TTS voice setup, cancellation, and audio routing; add background narration through a media session/service.
 4. Audit PdfiumAndroid/JitPack licensing and native ABI/16 KB page-size support; validate more representative PDFs before claiming broader support.
 5. Pin Pocket TTS and create a Pixel 10 model provisioning/inference spike.
 
 ## Blockers / pending verification
 
 - Readium PDF extraction/TTS locator mapping must be proven with representative PDFs.
-- Readium 3.3.0 is pinned and its basic EPUB/PDF rendering is verified on API 37. The Pocket TTS revision and model artifact/release URL still need to be pinned and verified.
+- Readium 3.4.0 is pinned. The supplied EPUB opened with foreground TTS and the PDF opened with continuous scrolling/page navigation on API 37. The Pocket TTS revision and model artifact/release URL still need to be pinned and verified.
 - SAF folder accessibility depends on Android's picker and the document provider; the basic local-folder grant and scan flow worked on the API 37 AVD. Repeat on API 36 and document provider constraints.
 - Readium 3.3.0 opened the supplied EPUB fixtures directly through persisted `content://` URIs on the API 37 AVD. Percentage-based progress restores the PDF page position; serialized Readium locator persistence and reader process restoration remain unimplemented.
-- The supplied searchable PDF renders and resumes at the saved percentage with Readium's PDFium adapter. No PDF OCR, TTS text extraction, or synchronized highlighting has been validated.
+- The supplied searchable PDF renders and resumes at the saved percentage with Readium's PDFium adapter. PDF TTS text extraction and synchronized highlighting remain unimplemented; scanned-PDF OCR is out of scope.
 - AGP 9.4 currently requires opting out of its new DSL to use Kotlin 2.4.20's external Android plugin. The opt-out is deprecated and must be revisited when AGP/Kotlin plugin compatibility improves.

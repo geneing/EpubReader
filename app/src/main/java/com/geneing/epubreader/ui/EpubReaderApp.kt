@@ -434,7 +434,6 @@ private fun FoldersContent(
     onOpenFolder: (BookFolderEntity) -> Unit,
 ) {
     val orderedFolders = folders.sortedByDescending { it.lastScannedAt ?: it.addedAt }
-    val recentFolders = orderedFolders.take(3)
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -470,19 +469,7 @@ private fun FoldersContent(
                     )
                 }
             } else {
-                item { SectionHeading("RECENT FOLDERS", recentFolders.size.toString()) }
-                items(recentFolders, key = { "recent-folder:${it.treeUri}" }) { folder ->
-                    FolderCard(
-                        folder = folder,
-                        bookCount = books.count { it.folderUri == folder.treeUri && it.isAvailable },
-                        scanning = "scan:${folder.treeUri}" in busyKeys,
-                        removing = "remove:${folder.treeUri}" in busyKeys,
-                        onScan = { onScan(folder) },
-                        onRemove = { onRemove(folder) },
-                        onOpen = { onOpenFolder(folder) },
-                    )
-                }
-                item { SectionHeading("ALL FOLDERS", folders.size.toString()) }
+                item { SectionHeading("CONNECTED FOLDERS", folders.size.toString()) }
                 items(orderedFolders, key = { "all-folder:${it.treeUri}" }) { folder ->
                     FolderCard(
                         folder = folder,

@@ -50,6 +50,7 @@ dependencies {
     implementation(libs.readium.streamer)
     implementation(libs.readium.navigator)
     implementation(libs.readium.pdfium)
+    implementation(libs.readium.tts)
     ksp(libs.androidx.room.compiler)
     coreLibraryDesugaring(libs.android.desugar)
 

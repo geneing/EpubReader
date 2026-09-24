@@ -16,11 +16,11 @@ The version numbers above are a dated baseline, not a promise that they will rem
 
 ### Current implementation snapshot
 
-- The app is currently a single `:app` Compose module. Its version catalog pins Kotlin 2.4.20, AGP 9.4.0, Gradle 9.7.1, Compose BOM 2026.09.00, Readium 3.3.0, and PDFium adapter 3.3.0. `minSdk`/`targetSdk` are API 36; Compose currently requires `compileSdk` 37.
+- The app is currently a single `:app` Compose module. Its version catalog pins Kotlin 2.4.20, AGP 9.4.0, Gradle 9.7.1, Compose BOM 2026.09.00, Readium 3.4.0, and PDFium adapter 3.4.0. `minSdk`/`targetSdk` are API 36; Compose currently requires `compileSdk` 37.
 - Room stores SAF folder/book URIs, publication metadata, added/opened dates, a derived cover path, and reading percentage. Readium metadata and cover extraction is lazy for visible library rows. Original book files remain at the SAF URI.
 - The first UI has recent/all files, recent/all folders, folder contents, and global Settings routes. Theme, EPUB font family/scale, speech engine selection, and speech-rate preferences are persisted globally.
-- EPUB and PDF visual navigators have been manually exercised on an API 37 AVD with the project test fixtures. Resume currently uses Readium's total progression percentage, not a serialized `Locator`.
-- TTS playback, per-book speech preferences, background media controls, exact locator persistence, bookmarks, and Pocket TTS are not implemented yet. Pocket is shown as unavailable in Settings until its engine is integrated.
+- EPUB and PDF visual navigators have been manually exercised on an API 37 AVD with the project test fixtures. The reader provides page/location scrubbing and selection, TOC, and Readium publication search. Resume currently uses Readium's total progression percentage, not a serialized `Locator`.
+- Foreground EPUB narration uses Readium 3.4.0's Android TTS navigator. Selection context actions start narration at the selected locator, and utterance locators drive visual following/highlighting. Speech-rate preference is applied. PDF speech, per-book speech preferences, background media-session controls, exact locator persistence, bookmarks, and Pocket TTS remain unimplemented. Pocket is shown as unavailable in Settings until its engine is integrated.
 
 ## 2. High-level architecture
 
@@ -60,9 +60,9 @@ Use constructor injection; select a lightweight DI approach already compatible w
 
 Readium provides parsers, publication metadata/locators, EPUB/PDF navigators, and a TTS navigator. It is a low-level toolkit: EpubReader owns its library, import lifecycle, UI, persistence, and playback experience.
 
-- Begin with the latest stable Readium Kotlin Toolkit compatible with the chosen Kotlin/Gradle/SDK baseline (3.3.0 was current in this research snapshot).
+- Pin the latest stable Readium Kotlin Toolkit compatible with the chosen Kotlin/Gradle/SDK baseline (3.4.0 checked 2026-09-24; see the versioned migration notes before upgrades).
 - EPUB uses the Readium streamer/publication and `EpubNavigatorFragment` or a compatible navigator. The rest of the app is Compose; bridge the Android `Fragment` navigator using a lifecycle-safe fragment container/AndroidView host. Keep navigator creation and destruction aligned with the owning reader destination.
-- PDF uses Readium's PDF navigator with the pinned `readium-adapter-pdfium:3.3.0` adapter. A searchable four-page fixture renders and resumes by saved percentage on the API 37 AVD. The adapter pulls the `marain87` AndroidPdfViewer/PdfiumAndroid artifacts from JitPack; upstream describes PdfiumAndroid as unmaintained, so keep the PDF integration isolated and re-evaluate maintenance, native ABI/16 KB page-size compatibility, and alternatives before release.
+- PDF uses Readium's PDF navigator with the pinned `readium-adapter-pdfium:3.4.0` adapter. EpubReader sets `PdfiumDefaults(scroll = true)` to retain continuous scrolling, which is no longer the adapter default. Version 3.4.0 also corrects PDF page locators/progression that were previously one page ahead; this app stores progression percentages rather than serialized locators, so verify existing PDF resume values when upgrading. The supplied searchable four-page PDF rendered, displayed its page count, and navigated by page selection on API 37 with 3.4.0. The adapter pulls the `marain87` AndroidPdfViewer/PdfiumAndroid artifacts from JitPack; upstream describes PdfiumAndroid as unmaintained, so keep the PDF integration isolated and re-evaluate maintenance, native ABI/16 KB page-size compatibility, and alternatives before release.
 - Readium's `TtsNavigator` can provide publication-aware utterances and location synchronization. Use it for the shared EPUB TTS path where its Android TTS integration provides the desired behavior.
 - Readium marks PDF TTS as less complete/under consideration in its current feature table. Treat PDF reflow/extraction and utterance highlighting as a proof-of-concept gate. Preserve a PDF-specific text extraction/position adapter seam so EPUB progress does not depend on PDF behavior.
 - Readium's newer Compose-based Web Navigators are alpha in the research snapshot. Prefer the proven native Android navigator inside the Compose shell until the Compose navigator is stable and satisfies required TTS/decorations.
@@ -194,7 +194,7 @@ Use Readium locator serialization rather than relying on page number/string offs
 
 1. Bootstrap Compose app, version catalog, API 36 baseline, CI/build checks, and app navigation shell.
 2. Integrate Readium EPUB/PDF parsing and navigators; implement SAF folder registry, persisted tree grants, in-place URI reading, lazy metadata/cover caching, Room library/progress, and percentage-based position restoration. Validate on AVD before adding device-specific work.
-3. Add Readium TTS navigator with Android System TTS and sentence highlight; validate callback/locator flow.
+3. Foreground Readium TTS with Android System TTS, selected-locator start, and spoken-text highlight is integrated; continue voice/cancellation checks and add the MediaSessionService/background path.
 4. Add MediaSessionService/background controls, audio focus, headset commands, and persistent sleep timer.
 5. The PDFium navigator is integrated and renders the supplied searchable-text fixture. Continue proving text extraction/reflow/narration mapping on varied PDFs before making PDF TTS or synchronized-highlighting claims.
 6. Pin Pocket TTS; add a host-to-Pixel 10 ADB model provisioning workflow and persistent device cache; wire model state/attribution and Android service provider; test install size, native memory, first-audio latency, offline use, voice switching, and cancellation on Pixel 10. Keep all non-inference work on AVD.
