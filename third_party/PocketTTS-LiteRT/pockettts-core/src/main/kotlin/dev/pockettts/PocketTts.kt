@@ -112,11 +112,34 @@ object PocketTts {
     const val NEUTRAL = "pt_neutral_latent_f32.bin"
     const val TOKENIZER = "pt_tokenizer.tsv"
 
-    fun voiceFile(name: String) = "pt_voice_$name.bin"
+    /**
+     * Subdirectory of the model directory that holds voice state files. Voices
+     * are discovered by listing it (and the legacy root layout), not hardcoded.
+     */
+    const val VOICES_DIR = "voices"
 
     /**
-     * Locale voices bundled with the model (CC-BY-4.0 / CC0 only), in the order
-     * the engine and the TTS service present them. The first is the default.
+     * Path of the voice state file for [name], relative to the model directory:
+     * `voices/<name>.bin`.
+     */
+    fun voiceFile(name: String) = "$VOICES_DIR/$name.bin"
+
+    /** Legacy flat layout, `pt_voice_<name>.bin`, still resolved for old installs. */
+    fun legacyVoiceFile(name: String) = "pt_voice_$name.bin"
+
+    /**
+     * Maps a canonical voice path back to the legacy flat file name, or null when
+     * [fileName] is not a voice path.
+     */
+    internal fun legacyFileName(fileName: String): String? {
+        if (!fileName.startsWith("$VOICES_DIR/") || !fileName.endsWith(".bin")) return null
+        return legacyVoiceFile(fileName.removePrefix("$VOICES_DIR/").removeSuffix(".bin"))
+    }
+
+    /**
+     * Locale voices bundled with the model (CC-BY-4.0 / CC0 only), used as the
+     * metadata catalog and as the fallback list before voices are discovered. The
+     * first is the default.
      */
     val VOICES = Voice.all().map { it.name }
 
@@ -127,10 +150,16 @@ object PocketTts {
      */
     fun voiceId(name: String) = "pockettts-$name"
 
-    /** The voice [name] names, or null: `"alba"`, `"alba#female_1"`, `"pockettts-alba"`. */
+    /**
+     * The voice [name] names, or null: `"alba"`, `"alba#female_1"`,
+     * `"pockettts-alba"`. Known voices get their published metadata; any other
+     * non-blank name is accepted so a voice discovered on disk can be spoken.
+     */
     fun voiceNamed(name: String?): Voice? {
-        val bare = name?.trim()?.lowercase()?.substringBefore('#')?.removePrefix("pockettts-") ?: return null
-        return Voice.all().firstOrNull { it.name == bare }
+        val bare = name?.trim()?.lowercase()?.substringBefore('#')?.removePrefix("pockettts-")
+            ?.takeIf { it.isNotEmpty() }
+            ?: return null
+        return Voice.forName(bare)
     }
 
     /** hts/piper-sounding voice names, accepted as aliases when standard is skipped. */
@@ -156,6 +185,13 @@ data class Voice(
     override fun toString(): String = name
 
     companion object {
+        /**
+         * The catalog metadata for [name] when known, or a default [Voice] so a
+         * voice file discovered on disk can still be spoken.
+         */
+        fun forName(name: String): Voice =
+            all().firstOrNull { it.name == name } ?: Voice(name)
+
         /** All voices that ship with the model, with their published metadata. */
         fun all(): List<Voice> = listOf(
             Voice("alba"),

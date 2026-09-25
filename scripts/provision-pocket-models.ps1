@@ -52,6 +52,11 @@ foreach ($entry in $files.GetEnumerator()) {
         throw "SHA-256 mismatch for $name. Expected pinned digest $($entry.Value); got $sourceHash."
     }
 
+    $parent = Split-Path $name -Parent
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        Invoke-Adb @('shell', 'mkdir', '-p', "$remoteDirectory/$parent") | Out-Null
+    }
+
     Write-Host "Pushing $name"
     Invoke-Adb @('push', $path, "$remoteDirectory/$name") | Out-Null
     $remoteHashLine = Invoke-Adb @('shell', 'sha256sum', "$remoteDirectory/$name")

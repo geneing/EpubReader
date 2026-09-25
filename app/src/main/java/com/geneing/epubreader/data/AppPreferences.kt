@@ -87,11 +87,11 @@ object AppPreferences {
 
     fun pocketTtsVoice(context: Context): String = preferences(context)
         .getString(KEY_POCKET_TTS_VOICE, DEFAULT_POCKET_TTS_VOICE)
-        ?.takeIf { it in POCKET_TTS_VOICES }
+        ?.takeIf { it.isNotBlank() }
         ?: DEFAULT_POCKET_TTS_VOICE
 
     fun setPocketTtsVoice(context: Context, voice: String) {
-        if (voice in POCKET_TTS_VOICES) {
+        if (voice.isNotBlank()) {
             preferences(context).edit().putString(KEY_POCKET_TTS_VOICE, voice).apply()
         }
     }
@@ -130,7 +130,6 @@ object AppPreferences {
     const val MIN_SPEECH_RATE = 0.5f
     const val MAX_SPEECH_RATE = 2.0f
     const val DEFAULT_POCKET_TTS_VOICE = "alba"
-    val POCKET_TTS_VOICES = listOf("alba", "marius", "javert", "charles", "mary", "eve")
     const val DEFAULT_PLAYBACK_GRACE_MINUTES = 5
     const val MIN_PLAYBACK_GRACE_MINUTES = 0
     const val MAX_PLAYBACK_GRACE_MINUTES = 10

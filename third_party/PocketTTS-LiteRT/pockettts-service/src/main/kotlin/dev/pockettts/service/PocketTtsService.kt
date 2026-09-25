@@ -52,7 +52,7 @@ class PocketTtsService : TextToSpeechService() {
      */
     private val installedVoices: List<TtsVoice> by lazy {
         val models = PocketTtsModels.default(this)
-        val installed = TtsVoice.all().filter { models.store.exists(PocketTts.voiceFile(it.name)) }
+        val installed = models.installedVoiceNames().map { TtsVoice.forName(it) }
         installed.ifEmpty { TtsVoice.all() }
     }
 

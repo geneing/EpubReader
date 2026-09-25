@@ -2,28 +2,34 @@ package com.geneing.epubreader.reader
 
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.content.res.Configuration
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.view.ActionMode
-import android.view.Menu
-import android.view.MenuItem
+import android.graphics.PointF
 import android.util.Size
 import android.view.View
+import android.view.ViewConfiguration
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -32,6 +38,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.VerticalAlignCenter
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AlertDialog
@@ -45,10 +52,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,8 +93,10 @@ import kotlinx.coroutines.withContext
 import org.readium.r2.navigator.DecorableNavigator
 import org.readium.r2.navigator.Decoration
 import org.readium.r2.navigator.OverflowableNavigator
-import org.readium.r2.navigator.SelectableNavigator
 import org.readium.r2.navigator.VisualNavigator
+import org.readium.r2.navigator.input.DragEvent
+import org.readium.r2.navigator.input.InputListener
+import org.readium.r2.navigator.input.TapEvent
 import org.readium.r2.navigator.epub.EpubPreferences
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
@@ -94,6 +105,7 @@ import org.readium.r2.navigator.pdf.PdfNavigatorFragment
 import org.readium.r2.navigator.preferences.FontFamily
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.Locator
+import org.readium.r2.shared.publication.html.cssSelector
 import org.readium.r2.shared.publication.services.coverFitting
 import org.readium.r2.shared.publication.services.positionsByReadingOrder
 import org.readium.r2.shared.publication.services.locateProgression
@@ -105,6 +117,8 @@ import org.readium.adapter.pdfium.navigator.PdfiumEngineProvider
 import org.readium.adapter.pdfium.navigator.PdfiumDefaults
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.navigator.preferences.Theme as ReadiumTheme
+import org.json.JSONObject
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalReadiumApi::class)
 class ReaderActivity : FragmentActivity() {
@@ -137,6 +151,11 @@ class ReaderActivity : FragmentActivity() {
     private var containerAvailable = false
     private var currentSearch: SearchIterator? = null
     private var observedPlaybackLocator: Locator? = null
+    private var autoFollowReadingPosition by mutableStateOf(true)
+    private var recenterButtonVisible by mutableStateOf(false)
+    private var lastTapAt = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val format = BookFormat.from(
@@ -174,6 +193,7 @@ class ReaderActivity : FragmentActivity() {
                     navigatorContainerId = navigatorContainerId,
                     format = format,
                     isTtsPlaying = isTtsPlaying,
+                    showRecenterButton = recenterButtonVisible,
                     currentProgress = currentProgress,
                     pageLabel = pageLabel,
                     pageCount = pageCount,
@@ -182,6 +202,7 @@ class ReaderActivity : FragmentActivity() {
                     searchDialogOpen = searchDialogOpen,
                     tableOfContents = flattenTableOfContents(tableOfContents),
                     onTogglePlayback = ::togglePlayback,
+                    onRecenter = ::recenterOnReadingPosition,
                     onPreviousPage = { navigateReader(forward = false) },
                     onNextPage = { navigateReader(forward = true) },
                     onSeekProgress = ::seekToProgress,
@@ -212,6 +233,7 @@ class ReaderActivity : FragmentActivity() {
                 PlaybackStateStore.state.collect { state ->
                     if (state.bookUri != uri?.toString()) {
                         isTtsPlaying = false
+                        recenterButtonVisible = false
                         return@collect
                     }
                     isTtsPlaying = state.isPlaying
@@ -219,20 +241,8 @@ class ReaderActivity : FragmentActivity() {
                     val locator = state.currentLocator
                     if (locator != null && locator != observedPlaybackLocator) {
                         observedPlaybackLocator = locator
-                        currentVisualNavigator()?.go(locator, animated = false)
-                        (currentNavigatorFragment() as? DecorableNavigator)?.applyDecorations(
-                            listOf(
-                                Decoration(
-                                    id = TTS_DECORATION_ID,
-                                    locator = locator,
-                                    style = Decoration.Style.Highlight(
-                                        tint = android.graphics.Color.YELLOW,
-                                        isActive = true,
-                                    ),
-                                ),
-                            ),
-                            TTS_DECORATION_GROUP,
-                        )
+                        applyTtsDecoration(locator)
+                        if (autoFollowReadingPosition) followTtsLocator(locator)
                     }
                 }
             }
@@ -298,7 +308,7 @@ class ReaderActivity : FragmentActivity() {
                     initialLocator = initialLocator,
                     initialPreferences = epubPreferences(),
                     configuration = EpubNavigatorFragment.Configuration(
-                        selectionActionModeCallback = selectionActionModeCallback,
+                        shouldApplyInsetsPadding = false,
                     ),
                 ) to EpubNavigatorFragment::class.java
             BookFormat.PDF -> PdfNavigatorFactory(openedPublication, pdfiumEngineProvider)
@@ -311,7 +321,10 @@ class ReaderActivity : FragmentActivity() {
             .add(navigatorContainerId, fragmentClass, Bundle(), NAVIGATOR_TAG)
             .commitNow()
         when (val navigator = supportFragmentManager.findFragmentByTag(NAVIGATOR_TAG)) {
-            is EpubNavigatorFragment -> observeReadingProgress(navigator.currentLocator, openedBookUri(), isPdf = false)
+            is EpubNavigatorFragment -> {
+                observeReadingProgress(navigator.currentLocator, openedBookUri(), isPdf = false)
+                navigator.addInputListener(readerInputListener)
+            }
             is PdfNavigatorFragment<*, *> -> observeReadingProgress(navigator.currentLocator, openedBookUri(), isPdf = true)
         }
         isNavigatorReady = true
@@ -343,34 +356,141 @@ class ReaderActivity : FragmentActivity() {
 
     private fun openedBookUri(): String = requireNotNull(intent.getStringExtra(EXTRA_BOOK_URI))
 
-    private val selectionActionModeCallback = object : ActionMode.Callback {
-        override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
-            menu.add(Menu.NONE, MENU_READ_FROM_HERE, Menu.NONE, "Read from here")
-                .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-            menu.add(Menu.NONE, MENU_COPY_SELECTION, Menu.NONE, "Copy")
+    /**
+     * A double tap on the text starts narration at the sentence under the finger.
+     * Readium's input listener only reports single taps, so a double tap is detected
+     * by matching two taps that land close together in time and space.
+     *
+     * A touch drag is a genuine scroll by the reader, so it stops auto-following
+     * until they tap the recenter button. Readium only reports these events for
+     * real touch gestures, never for programmatic `go()`/`window.scrollBy` calls,
+     * which makes this a reliable manual-scroll signal.
+     */
+    private val readerInputListener = object : InputListener {
+        override fun onTap(event: TapEvent): Boolean {
+            val now = SystemClock.uptimeMillis()
+            val point = event.point
+            val slop = ViewConfiguration.get(this@ReaderActivity).scaledDoubleTapSlop.toFloat()
+            val dx = point.x - lastTapX
+            val dy = point.y - lastTapY
+            val isDoubleTap = lastTapAt != 0L &&
+                now - lastTapAt <= DOUBLE_TAP_TIMEOUT_MS &&
+                dx * dx + dy * dy <= slop * slop
+            lastTapAt = if (isDoubleTap) 0L else now
+            lastTapX = point.x
+            lastTapY = point.y
+            if (!isDoubleTap) return false
+            startReadAloudAtPoint(point)
             return true
         }
 
-        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
-
-        override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
-            if (item.itemId != MENU_READ_FROM_HERE && item.itemId != MENU_COPY_SELECTION) return false
-            val actionId = item.itemId
-            lifecycleScope.launch {
-                val selection = (currentNavigatorFragment() as? SelectableNavigator)?.currentSelection()
-                val selectedText = selection?.locator?.text?.highlight.orEmpty()
-                mode.finish()
-                if (actionId == MENU_READ_FROM_HERE) {
-                    startTtsAt(selection?.locator)
-                } else if (selectedText.isNotBlank()) {
-                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Selected text", selectedText))
-                }
+        override fun onDrag(event: DragEvent): Boolean {
+            if (event.type == DragEvent.Type.Start) {
+                stopAutoFollowing()
             }
-            return true
+            return false
         }
+    }
 
-        override fun onDestroyActionMode(mode: ActionMode) = Unit
+    /** The reader took over scrolling, so stop moving the page under them. */
+    private fun stopAutoFollowing() {
+        if (!isTtsPlaying || !autoFollowReadingPosition) return
+        autoFollowReadingPosition = false
+        recenterButtonVisible = true
+    }
+
+    private fun startReadAloudAtPoint(point: PointF) {
+        if (currentFormat != BookFormat.EPUB) return
+        lifecycleScope.launch {
+            val selection = sentenceAtPoint(point)
+            if (selection == null) {
+                playbackError = "Couldn't find a sentence at that spot."
+                return@launch
+            }
+            startTtsAt(selection.locator, alignToSelection = true)
+        }
+    }
+
+    private data class SentenceSelection(val locator: Locator, val text: String)
+
+    /**
+     * Finds the sentence under a device-pixel [point] in the EPUB content and
+     * returns it as a locator carrying the sentence text and the block's
+     * `cssSelector`, so narration can start at the tapped sentence.
+     */
+    private suspend fun sentenceAtPoint(point: PointF): SentenceSelection? {
+        val navigator = currentNavigatorFragment() as? EpubNavigatorFragment ?: return null
+        val script = SENTENCE_AT_POINT_JS
+            .replace("__X__", point.x.toString())
+            .replace("__Y__", point.y.toString())
+        val json = runCatching { navigator.evaluateJavascript(script) }.getOrNull()
+        val obj = json?.takeIf { it != "null" }
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
+            ?: return null
+        val text = obj.optString("text").takeIf { it.isNotBlank() } ?: return null
+        val base = navigator.currentLocator.value
+        val selector = obj.optString("selector").takeIf { it.isNotBlank() }
+        val locations = if (selector == null) {
+            base.locations
+        } else {
+            base.locations.copy(
+                otherLocations = base.locations.otherLocations + ("cssSelector" to selector),
+            )
+        }
+        return SentenceSelection(
+            locator = base.copy(locations = locations, text = Locator.Text(highlight = text)),
+            text = text,
+        )
+    }
+
+    private suspend fun applyTtsDecoration(locator: Locator) {
+        (currentNavigatorFragment() as? DecorableNavigator)?.applyDecorations(
+            listOf(
+                Decoration(
+                    id = TTS_DECORATION_ID,
+                    locator = locator,
+                    style = Decoration.Style.Highlight(
+                        tint = android.graphics.Color.YELLOW,
+                        isActive = true,
+                    ),
+                ),
+            ),
+            TTS_DECORATION_GROUP,
+        )
+    }
+
+    private fun recenterOnReadingPosition() {
+        autoFollowReadingPosition = true
+        recenterButtonVisible = false
+        val locator = observedPlaybackLocator ?: return
+        followTtsLocator(locator)
+    }
+
+    /**
+     * Keeps the sentence being narrated inside a comfortable middle band. A new
+     * resource (chapter) is loaded by Readium first; within a resource the view is
+     * only moved when the sentence drifts outside the band, so the page does not
+     * jump for every utterance.
+     */
+    private fun followTtsLocator(locator: Locator) {
+        val navigator = currentVisualNavigator() ?: return
+        lifecycleScope.launch {
+            if (navigator.currentLocator.value.href != locator.href) {
+                navigator.go(locator, animated = false)
+                delay(RESOURCE_LOAD_SETTLE_MS)
+            }
+            centerOnNarratedSentence(locator)
+        }
+    }
+
+    private suspend fun centerOnNarratedSentence(locator: Locator) {
+        val fragment = currentNavigatorFragment() as? EpubNavigatorFragment ?: return
+        val selector = locator.locations.cssSelector ?: return
+        val highlight = locator.text.highlight?.takeIf(String::isNotBlank) ?: return
+        val script = CENTER_SENTENCE_JS
+            .replace("__SELECTOR__", JSONObject.quote(selector))
+            .replace("__TEXT__", JSONObject.quote(highlight))
+        runCatching { fragment.evaluateJavascript(script) }
     }
 
     private fun currentNavigatorFragment(): androidx.fragment.app.Fragment? =
@@ -402,23 +522,26 @@ class ReaderActivity : FragmentActivity() {
         }
     }
 
-    private fun startTtsAt(locator: Locator?) {
+    private fun startTtsAt(locator: Locator?, alignToSelection: Boolean = false) {
         if (currentFormat != BookFormat.EPUB) {
             playbackError = "Text-to-speech is currently available for EPUB books."
             return
         }
         val uri = intent.getStringExtra(EXTRA_BOOK_URI) ?: return
         playbackError = null
-        launchPlaybackService(locator)
+        autoFollowReadingPosition = true
+        recenterButtonVisible = false
+        launchPlaybackService(locator, alignToSelection)
     }
 
-    private fun launchPlaybackService(locator: Locator?) {
+    private fun launchPlaybackService(locator: Locator?, alignToSelection: Boolean = false) {
         val uri = intent.getStringExtra(EXTRA_BOOK_URI) ?: return
         PlaybackServiceCommands.start(
             context = this,
             bookUri = uri,
             progressPercent = currentProgress * 100.0,
             initialLocator = locator,
+            alignToSelection = alignToSelection,
         )
     }
 
@@ -519,12 +642,14 @@ class ReaderActivity : FragmentActivity() {
         }
         return EpubPreferences(
             fontFamily = family,
-            typeScale = AppPreferences.readerFontScale(this).toDouble(),
+            fontSize = AppPreferences.readerFontScale(this).toDouble(),
+            scroll = true,
             theme = if (darkTheme) ReadiumTheme.DARK else ReadiumTheme.LIGHT,
         )
     }
 
     override fun onDestroy() {
+        (currentNavigatorFragment() as? VisualNavigator)?.removeInputListener(readerInputListener)
         currentSearch?.close()
         currentSearch = null
         publication?.close()
@@ -543,11 +668,174 @@ class ReaderActivity : FragmentActivity() {
         const val EXTRA_BOOK_MIME = "book_mime"
         const val EXTRA_PROGRESS_PERCENT = "progress_percent"
         private const val NAVIGATOR_TAG = "readium-epub-navigator"
-        private const val MENU_READ_FROM_HERE = 1
-        private const val MENU_COPY_SELECTION = 2
         private const val TTS_DECORATION_ID = "tts-current-utterance"
         private const val TTS_DECORATION_GROUP = "tts"
         private const val MAX_SEARCH_RESULTS = 100
+        private const val DOUBLE_TAP_TIMEOUT_MS = 300L
+        private const val RESOURCE_LOAD_SETTLE_MS = 450L
+
+        /**
+         * Finds the sentence under the tapped point (device pixels) and returns
+         * `{ selector, text }`, where `selector` is the CSS selector of the nearest
+         * block element. Used to start narration at the double-tapped sentence.
+         */
+        private val SENTENCE_AT_POINT_JS = """
+            (function () {
+              var ratio = window.devicePixelRatio || 1;
+              var range = null;
+              var pointX = __X__ / ratio;
+              var pointY = __Y__ / ratio;
+              if (document.caretRangeFromPoint) {
+                range = document.caretRangeFromPoint(pointX, pointY);
+              } else if (document.caretPositionFromPoint) {
+                var caret = document.caretPositionFromPoint(pointX, pointY);
+                if (caret) {
+                  range = document.createRange();
+                  range.setStart(caret.offsetNode, caret.offset);
+                  range.collapse(true);
+                }
+              }
+              if (!range) return null;
+              var startNode = range.startContainer;
+              var startOffset = range.startOffset;
+              var element = startNode.nodeType === 3 ? startNode.parentNode : startNode;
+              var BLOCK = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dd,dt,pre,article,section';
+              var block = (element && element.closest) ? (element.closest(BLOCK) || element) : element;
+              if (!block || !block.ownerDocument) return null;
+              var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+              var nodes = [];
+              var blockText = '';
+              var node;
+              while ((node = walker.nextNode())) {
+                nodes.push({ node: node, start: blockText.length, end: blockText.length + node.nodeValue.length });
+                blockText += node.nodeValue;
+              }
+              if (nodes.length === 0) return null;
+              function offsetOf(n, o) {
+                for (var k = 0; k < nodes.length; k++) {
+                  if (nodes[k].node === n) return nodes[k].start + o;
+                }
+                return -1;
+              }
+              var pos = offsetOf(startNode, startOffset);
+              if (pos < 0) pos = 0;
+              var i = pos;
+              while (i > 0) {
+                var before = blockText.charAt(i - 1);
+                if (before === '.' || before === '!' || before === '?' || before === '\n' || before === '\r') break;
+                i--;
+              }
+              var start = i;
+              while (start < blockText.length && /\s/.test(blockText.charAt(start))) start++;
+              var j = Math.max(pos, i);
+              while (j < blockText.length) {
+                var ch = blockText.charAt(j);
+                if (ch === '.' || ch === '!' || ch === '?') { j++; break; }
+                if (ch === '\n' || ch === '\r') break;
+                j++;
+              }
+              while (j < blockText.length && /["'\u2019\u201d)\]]/.test(blockText.charAt(j))) j++;
+              if (j <= start) return null;
+              function selectorFor(el) {
+                var parts = [];
+                while (el && el.nodeType === 1 && el !== document.body && el !== document.documentElement) {
+                  var part = el.tagName.toLowerCase();
+                  var parent = el.parentElement;
+                  if (parent && parent.children.length > 1) {
+                    part += ':nth-child(' + (Array.prototype.indexOf.call(parent.children, el) + 1) + ')';
+                  }
+                  parts.unshift(part);
+                  el = parent;
+                }
+                return parts.join(' > ');
+              }
+              return { selector: selectorFor(block), text: blockText.substring(start, j) };
+            })()
+        """.trimIndent()
+
+        /**
+         * Scrolls the narrated sentence into the middle band of the viewport, but
+         * only when it has drifted outside the comfortable area so the page does not
+         * jump for every utterance. `__SELECTOR__` and `__TEXT__` are replaced with
+         * JSON-quoted arguments.
+         */
+        private val CENTER_SENTENCE_JS = """
+            (function () {
+              var selector = __SELECTOR__;
+              var highlight = __TEXT__;
+              if (!highlight) return false;
+              var root = selector ? document.querySelector(selector) : document.body;
+              if (!root) root = document.body;
+              function buildIndex(el) {
+                var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+                var nodes = [];
+                var text = '';
+                var n;
+                while ((n = walker.nextNode())) {
+                  nodes.push({ node: n, start: text.length, end: text.length + n.nodeValue.length });
+                  text += n.nodeValue;
+                }
+                return { nodes: nodes, text: text };
+              }
+              function normalizeMapping(raw) {
+                var map = [];
+                var out = '';
+                var lastSpace = true;
+                for (var i = 0; i < raw.length; i++) {
+                  var c = raw.charAt(i);
+                  if (/\s/.test(c)) {
+                    if (!lastSpace && out.length > 0) { map.push(i); out += ' '; }
+                    lastSpace = true;
+                  } else {
+                    map.push(i);
+                    out += c;
+                    lastSpace = false;
+                  }
+                }
+                while (out.length > 0 && out.charAt(out.length - 1) === ' ') {
+                  out = out.substring(0, out.length - 1);
+                  map.pop();
+                }
+                return { text: out, map: map };
+              }
+              function locate(nodes, offset) {
+                for (var k = 0; k < nodes.length; k++) {
+                  if (offset >= nodes[k].start && offset <= nodes[k].end) {
+                    return { node: nodes[k].node, offset: offset - nodes[k].start };
+                  }
+                }
+                var last = nodes[nodes.length - 1];
+                if (!last) return null;
+                return { node: last.node, offset: last.node.nodeValue.length };
+              }
+              var index = buildIndex(root);
+              var normalized = normalizeMapping(index.text);
+              var target = highlight.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+              if (target.length === 0) return false;
+              var at = normalized.text.indexOf(target);
+              if (at < 0) return false;
+              var startRaw = normalized.map[at];
+              var endNorm = at + target.length;
+              var endRaw = endNorm < normalized.map.length ? normalized.map[endNorm] : index.text.length;
+              var from = locate(index.nodes, startRaw);
+              var to = locate(index.nodes, endRaw);
+              if (!from || !to) return false;
+              var range = document.createRange();
+              try {
+                range.setStart(from.node, from.offset);
+                range.setEnd(to.node, to.offset);
+              } catch (error) {
+                return false;
+              }
+              var rect = range.getBoundingClientRect();
+              if (!rect || (rect.width === 0 && rect.height === 0)) return false;
+              var height = window.innerHeight || document.documentElement.clientHeight || 0;
+              if (height <= 0) return false;
+              if (rect.top >= height * 0.22 && rect.bottom <= height * 0.74) return true;
+              window.scrollBy(0, rect.top - height * 0.38);
+              return true;
+            })()
+        """.trimIndent()
     }
 }
 
@@ -562,6 +850,7 @@ private fun ReaderScreen(
     navigatorContainerId: Int,
     format: BookFormat?,
     isTtsPlaying: Boolean,
+    showRecenterButton: Boolean,
     currentProgress: Float,
     pageLabel: String,
     pageCount: Int,
@@ -571,6 +860,7 @@ private fun ReaderScreen(
     tableOfContents: List<Link>,
     tocDialogOpen: Boolean,
     onTogglePlayback: () -> Unit,
+    onRecenter: () -> Unit,
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit,
     onSeekProgress: (Float) -> Unit,
@@ -589,7 +879,16 @@ private fun ReaderScreen(
     var pageEntry by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
     var sliderPosition by remember(currentProgress) { mutableStateOf(currentProgress.coerceIn(0f, 1f)) }
+    var scrollBarVisible by remember { mutableStateOf(false) }
     val pageUnit = if (format == BookFormat.PDF) "page" else "location"
+    val isPdf = format == BookFormat.PDF
+
+    // The vertical scrollbar fades in while the user scrolls and out when idle.
+    LaunchedEffect(currentProgress) {
+        scrollBarVisible = true
+        delay(900)
+        scrollBarVisible = false
+    }
 
     Scaffold(
         topBar = {
@@ -614,7 +913,7 @@ private fun ReaderScreen(
             )
         },
         bottomBar = {
-            if (navigatorReady && errorMessage == null) {
+            if (isPdf && navigatorReady && errorMessage == null) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -714,6 +1013,33 @@ private fun ReaderScreen(
                 },
             )
 
+            if (!isPdf && navigatorReady && errorMessage == null) {
+                VerticalScrollIndicator(
+                    progress = currentProgress,
+                    visible = scrollBarVisible,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 3.dp)
+                        .fillMaxHeight(),
+                )
+            }
+
+            if (!isPdf && navigatorReady && errorMessage == null && showRecenterButton) {
+                SmallFloatingActionButton(
+                    onClick = onRecenter,
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.VerticalAlignCenter,
+                        contentDescription = "Jump to where narration is",
+                    )
+                }
+            }
+
             when {
                 errorMessage != null -> ReaderMessage(
                     message = errorMessage,
@@ -722,6 +1048,32 @@ private fun ReaderScreen(
                 isLoading || !navigatorReady -> CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center),
                 )
+            }
+
+            if (isPdf) {
+                playbackError?.let { message ->
+                    Text(
+                        message,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            } else {
+                playbackError?.let { message ->
+                    Text(
+                        message,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }
@@ -822,6 +1174,43 @@ private fun ReaderScreen(
             },
             confirmButton = { TextButton(onClick = onDismissToc) { Text("Close") } },
         )
+    }
+}
+
+@Composable
+private fun VerticalScrollIndicator(
+    progress: Float,
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = modifier,
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                    RoundedCornerShape(2.dp),
+                ),
+        ) {
+            val thumbHeight = 56.dp
+            val travel = (maxHeight - thumbHeight).coerceAtLeast(0.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(thumbHeight)
+                    .offset(y = travel * progress.coerceIn(0f, 1f))
+                    .background(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                        RoundedCornerShape(2.dp),
+                    ),
+            )
+        }
     }
 }
 

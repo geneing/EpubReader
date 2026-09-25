@@ -23,6 +23,7 @@ data class PocketModelUiState(
     val isInstalling: Boolean = false,
     val progress: Float = 0f,
     val message: String? = null,
+    val voices: List<String> = emptyList(),
 )
 
 /** Uses the pinned Pocket model manifest; app-owned model data stays outside the APK. */
@@ -56,6 +57,7 @@ class PocketTtsModelManager(context: Context) {
             requiredFiles = requiredFiles.size,
             missingFiles = missing,
             message = message,
+            voices = models.installedVoiceNames(),
         )
     }
 

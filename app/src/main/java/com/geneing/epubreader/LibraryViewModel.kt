@@ -215,7 +215,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun setPocketTtsVoice(voice: String) {
-        if (voice !in AppPreferences.POCKET_TTS_VOICES || mutableSettings.value.pocketTtsVoice == voice) return
+        if (voice.isBlank() || mutableSettings.value.pocketTtsVoice == voice) return
         AppPreferences.setPocketTtsVoice(getApplication(), voice)
         mutableSettings.value = mutableSettings.value.copy(pocketTtsVoice = voice)
     }

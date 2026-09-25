@@ -50,17 +50,20 @@ object PlaybackServiceCommands {
     const val EXTRA_BOOK_URI = "playback_book_uri"
     const val EXTRA_INITIAL_LOCATOR = "playback_initial_locator"
     const val EXTRA_PROGRESS_PERCENT = "playback_progress_percent"
+    const val EXTRA_ALIGN_TO_SELECTION = "playback_align_to_selection"
 
     fun start(
         context: Context,
         bookUri: String,
         progressPercent: Double,
         initialLocator: Locator? = null,
+        alignToSelection: Boolean = false,
     ) {
         val intent = commandIntent(context, ACTION_START)
             .putExtra(EXTRA_BOOK_URI, bookUri)
             .putExtra(EXTRA_PROGRESS_PERCENT, progressPercent)
             .putExtra(EXTRA_INITIAL_LOCATOR, initialLocator)
+            .putExtra(EXTRA_ALIGN_TO_SELECTION, alignToSelection)
         ContextCompat.startForegroundService(context, intent)
     }
 

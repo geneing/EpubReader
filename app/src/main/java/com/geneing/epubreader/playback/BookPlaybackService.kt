@@ -43,8 +43,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Dispatchers
 import org.readium.navigator.media.common.DefaultMediaMetadataProvider
 import org.readium.navigator.media.tts.AndroidTtsNavigatorFactory
@@ -230,9 +232,13 @@ class BookPlaybackService : MediaSessionService() {
                     Locator::class.java,
                 )
                 val progress = intent.getDoubleExtra(PlaybackServiceCommands.EXTRA_PROGRESS_PERCENT, 0.0)
+                val alignToSelection = intent.getBooleanExtra(
+                    PlaybackServiceCommands.EXTRA_ALIGN_TO_SELECTION,
+                    false,
+                )
                 if (!uri.isNullOrBlank()) {
                     if (ttsNavigator == null) showPreparingNotification()
-                    startPlayback(uri, progress, locator)
+                    startPlayback(uri, progress, locator, alignToSelection)
                 }
             }
             PlaybackServiceCommands.ACTION_PLAY -> resumePlayback()
@@ -254,10 +260,27 @@ class BookPlaybackService : MediaSessionService() {
         return START_NOT_STICKY
     }
 
-    private fun startPlayback(uriString: String, fallbackProgress: Double, initialLocator: Locator?) {
-        if (activeBookUri == uriString && ttsNavigator != null) {
-            initialLocator?.let(ttsNavigator!!::go)
-            resumePlayback()
+    private fun startPlayback(
+        uriString: String,
+        fallbackProgress: Double,
+        initialLocator: Locator?,
+        alignToSelection: Boolean,
+    ) {
+        val existingNavigator = ttsNavigator
+        if (activeBookUri == uriString && existingNavigator != null) {
+            lifecycleScope.launch {
+                if (initialLocator != null) {
+                    val before = existingNavigator.location.value
+                    existingNavigator.go(initialLocator)
+                    withTimeoutOrNull(LOCATION_CHANGE_TIMEOUT_MS) {
+                        existingNavigator.location.first {
+                            it.utterance != before.utterance || it.href != before.href
+                        }
+                    }
+                    if (alignToSelection) alignToSelectedText(existingNavigator, initialLocator)
+                }
+                resumePlayback()
+            }
             return
         }
         lifecycleScope.launch {
@@ -304,6 +327,9 @@ class BookPlaybackService : MediaSessionService() {
                 observePlayback(navigator, uriString, actualTitle, actualAuthor, book?.coverPath)
                 explicitUserPause = false
                 pausedForHeadsetDisconnect = false
+                // "Read from here" starts the navigator at the selected block; advance to
+                // the exact selected sentence before playing.
+                if (alignToSelection) alignToSelectedText(navigator, initialLocator)
                 navigator.play()
             } catch (error: CancellationException) {
                 throw error
@@ -319,6 +345,42 @@ class BookPlaybackService : MediaSessionService() {
             }
         }
     }
+
+    /**
+     * The content iterator can only start at an HTML block (a `cssSelector`), so a
+     * selected sentence in the middle of a paragraph would otherwise be read from
+     * the paragraph's first sentence. Advance utterance by utterance until the
+     * navigator's current text matches the text that was selected.
+     */
+    private suspend fun alignToSelectedText(
+        navigator: TtsNavigator<*, *, *, *>,
+        locator: Locator?,
+    ) {
+        val target = locator?.text?.highlight
+            ?.let(::normalizeUtterance)
+            ?.takeIf { it.isNotBlank() }
+            ?: return
+        repeat(MAX_ALIGN_SKIPS) {
+            val current = normalizeUtterance(navigator.location.value.utterance)
+            if (current.isNotEmpty() && matchesUtterance(current, target)) return
+            if (!navigator.hasNextUtterance()) return
+            val before = navigator.location.value
+            navigator.skipToNextUtterance()
+            withTimeoutOrNull(LOCATION_CHANGE_TIMEOUT_MS) {
+                navigator.location.first { it.utterance != before.utterance || it.range != before.range }
+            }
+        }
+    }
+
+    private fun matchesUtterance(current: String, target: String): Boolean {
+        if (current == target || current.contains(target)) return true
+        // Readium may split our sentence further; accept a long-enough leading fragment.
+        return target.startsWith(current) && current.length >= 12
+    }
+
+    private fun normalizeUtterance(text: String): String =
+        text.replace(WHITESPACE_REGEX, " ").trim()
+
 
     private suspend fun createTtsNavigator(
         publication: Publication,
@@ -547,18 +609,27 @@ class BookPlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * Buttons shown in the notification and on the lock screen. The slots place the
+     * sentence back/forward buttons around Media3's automatic play/pause button, so
+     * the controls read "previous sentence · play/pause · next sentence", with Stop
+     * tucked into the overflow menu.
+     */
     private fun mediaButtonPreferences(): List<CommandButton> = listOf(
         CommandButton.Builder(CommandButton.ICON_SKIP_BACK)
             .setDisplayName("Previous sentence")
             .setSessionCommand(skipBackCommand)
+            .setSlots(CommandButton.SLOT_BACK)
             .build(),
         CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD)
             .setDisplayName("Next sentence")
             .setSessionCommand(skipForwardCommand)
+            .setSlots(CommandButton.SLOT_FORWARD)
             .build(),
         CommandButton.Builder(CommandButton.ICON_STOP)
             .setDisplayName("Stop playback")
             .setSessionCommand(stopCommand)
+            .setSlots(CommandButton.SLOT_OVERFLOW)
             .build(),
     )
 
@@ -665,5 +736,8 @@ class BookPlaybackService : MediaSessionService() {
         private const val NOTIFICATION_ID = 4102
         private const val NOTIFICATION_CHANNEL_ID = "book_playback"
         private const val LONG_INTERRUPTION_THRESHOLD_MS = 30_000L
+        private const val MAX_ALIGN_SKIPS = 25
+        private const val LOCATION_CHANGE_TIMEOUT_MS = 4_000L
+        private val WHITESPACE_REGEX = Regex("\\s+")
     }
 }

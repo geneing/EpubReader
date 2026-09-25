@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -62,6 +63,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -734,12 +736,19 @@ private fun SettingsContent(
                         Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (speechEngine == SpeechEngine.POCKET && pocketModels.installed) {
-                        Text("Voice", style = MaterialTheme.typography.labelLarge)
-                        AppPreferences.POCKET_TTS_VOICES.forEach { voice ->
-                            PreferenceRadioRow(
-                                label = voice.replaceFirstChar(Char::uppercase),
-                                selected = pocketTtsVoice == voice,
-                                onClick = { onPocketTtsVoiceSelected(voice) },
+                        val voices = pocketModels.voices
+                        if (voices.isEmpty()) {
+                            Text(
+                                "No Pocket voices were found in the model's voices folder.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            PreferenceDropdown(
+                                label = "Voice",
+                                selected = pocketTtsVoice.takeIf { it in voices } ?: voices.first(),
+                                options = voices,
+                                onSelected = onPocketTtsVoiceSelected,
                             )
                         }
                     }
@@ -871,6 +880,46 @@ private fun PlaybackMiniPlayer(
                 }
                 IconButton(onClick = onSkipForward) {
                     Icon(Icons.Outlined.SkipNext, contentDescription = "Next sentence")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreferenceDropdown(
+    label: String,
+    selected: String,
+    options: List<String>,
+    enabled: Boolean = true,
+    onSelected: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    selected.replaceFirstChar(Char::uppercase),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(Icons.Outlined.ArrowDropDown, contentDescription = null)
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.replaceFirstChar(Char::uppercase)) },
+                        onClick = {
+                            expanded = false
+                            onSelected(option)
+                        },
+                    )
                 }
             }
         }

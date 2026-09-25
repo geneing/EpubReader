@@ -64,9 +64,13 @@ class PocketTtsConfig(
     }
 
     companion object {
-        /** Every bundled voice whose state file is installed, else all of them. */
+        /**
+         * Voices discovered in the model's [PocketTts.VOICES_DIR] directory (plus
+         * legacy root voice files), else the full bundled catalog before any
+         * voice file is installed.
+         */
         fun defaultVoices(models: PocketTtsModels): List<Voice> {
-            val installed = Voice.all().filter { models.store.exists(PocketTts.voiceFile(it.name)) }
+            val installed = models.installedVoiceNames().map { Voice.forName(it) }
             return installed.ifEmpty { Voice.all() }
         }
 
