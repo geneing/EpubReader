@@ -336,6 +336,8 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                         readerFontScale = state.readerFontScale,
                         speechEngine = state.speechEngine,
                         speechRate = state.speechRate,
+                        pocketTtsVoice = state.pocketTtsVoice,
+                        pocketModels = state.pocketModels,
                         playbackGraceMinutes = state.playbackGraceMinutes,
                         resumeOnBluetoothReconnect = state.resumeOnBluetoothReconnect,
                         resumeAfterLongInterruption = state.resumeAfterLongInterruption,
@@ -345,6 +347,10 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                         onFontScaleChanged = viewModel::setReaderFontScale,
                         onSpeechEngineSelected = viewModel::setSpeechEngine,
                         onSpeechRateChanged = viewModel::setSpeechRate,
+                        onPocketTtsVoiceSelected = viewModel::setPocketTtsVoice,
+                        onInstallPocketModels = viewModel::installPocketModels,
+                        onCancelPocketModelInstall = viewModel::cancelPocketModelInstall,
+                        onRefreshPocketModels = viewModel::refreshPocketModels,
                         onPlaybackGraceMinutesChanged = viewModel::setPlaybackGraceMinutes,
                         onResumeOnBluetoothReconnectChanged = viewModel::setResumeOnBluetoothReconnect,
                         onResumeAfterLongInterruptionChanged = viewModel::setResumeAfterLongInterruption,
@@ -583,6 +589,8 @@ private fun SettingsContent(
     readerFontScale: Float,
     speechEngine: SpeechEngine,
     speechRate: Float,
+    pocketTtsVoice: String,
+    pocketModels: com.geneing.epubreader.playback.PocketModelUiState,
     playbackGraceMinutes: Int,
     resumeOnBluetoothReconnect: Boolean,
     resumeAfterLongInterruption: Boolean,
@@ -592,6 +600,10 @@ private fun SettingsContent(
     onFontScaleChanged: (Float) -> Unit,
     onSpeechEngineSelected: (SpeechEngine) -> Unit,
     onSpeechRateChanged: (Float) -> Unit,
+    onPocketTtsVoiceSelected: (String) -> Unit,
+    onInstallPocketModels: () -> Unit,
+    onCancelPocketModelInstall: () -> Unit,
+    onRefreshPocketModels: () -> Unit,
     onPlaybackGraceMinutesChanged: (Int) -> Unit,
     onResumeOnBluetoothReconnectChanged: (Boolean) -> Unit,
     onResumeAfterLongInterruptionChanged: (Boolean) -> Unit,
@@ -667,9 +679,9 @@ private fun SettingsContent(
                     Text("Choose a narration provider and adjust its default pace.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     SpeechEngine.entries.forEach { engine ->
                         PreferenceRadioRow(
-                            label = if (engine == SpeechEngine.POCKET) "${engine.label} · coming soon" else engine.label,
+                            label = engine.label,
                             selected = speechEngine == engine,
-                            enabled = engine == SpeechEngine.ANDROID_SYSTEM,
+                            enabled = engine == SpeechEngine.ANDROID_SYSTEM || pocketModels.installed,
                             onClick = { onSpeechEngineSelected(engine) },
                         )
                     }
@@ -685,6 +697,52 @@ private fun SettingsContent(
                             runCatching { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
                         },
                     ) { Text("Manage voices and engines") }
+                }
+            }
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Pocket TTS models", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (pocketModels.installed) {
+                            "Pocket TTS ${dev.pockettts.PocketTtsModels.DEFAULT_VERSION} is ready · ${pocketModels.requiredFiles} required files are installed."
+                        } else {
+                            "Models are stored in EpubReader's app-specific files, not in the APK. ${pocketModels.installedFiles}/${pocketModels.requiredFiles} required files are present."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (pocketModels.isInstalling) {
+                        LinearProgressIndicator(
+                            progress = { pocketModels.progress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = onCancelPocketModelInstall) { Text("Cancel download") }
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = onRefreshPocketModels) { Text("Check files") }
+                            TextButton(onClick = onInstallPocketModels) {
+                                Text(if (pocketModels.installed) "Verify / repair" else "Download models")
+                            }
+                        }
+                    }
+                    pocketModels.message?.let { message ->
+                        Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (speechEngine == SpeechEngine.POCKET && pocketModels.installed) {
+                        Text("Voice", style = MaterialTheme.typography.labelLarge)
+                        AppPreferences.POCKET_TTS_VOICES.forEach { voice ->
+                            PreferenceRadioRow(
+                                label = voice.replaceFirstChar(Char::uppercase),
+                                selected = pocketTtsVoice == voice,
+                                onClick = { onPocketTtsVoiceSelected(voice) },
+                            )
+                        }
+                    }
                 }
             }
             Card(

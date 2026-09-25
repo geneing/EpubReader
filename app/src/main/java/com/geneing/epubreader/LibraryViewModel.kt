@@ -16,13 +16,18 @@ import com.geneing.epubreader.reader.ReadiumPublicationLoader
 import com.geneing.epubreader.playback.PlaybackStateStore
 import com.geneing.epubreader.playback.PlaybackUiState
 import com.geneing.epubreader.playback.PlaybackServiceCommands
+import com.geneing.epubreader.playback.PocketModelUiState
+import com.geneing.epubreader.playback.PocketTtsModelManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.readium.r2.shared.publication.services.coverFitting
@@ -37,6 +42,8 @@ data class LibraryUiState(
     val readerFontScale: Float = AppPreferences.DEFAULT_FONT_SCALE,
     val speechEngine: SpeechEngine = SpeechEngine.ANDROID_SYSTEM,
     val speechRate: Float = AppPreferences.DEFAULT_SPEECH_RATE,
+    val pocketTtsVoice: String = AppPreferences.DEFAULT_POCKET_TTS_VOICE,
+    val pocketModels: PocketModelUiState = PocketModelUiState(),
     val playbackGraceMinutes: Int = AppPreferences.DEFAULT_PLAYBACK_GRACE_MINUTES,
     val resumeOnBluetoothReconnect: Boolean = false,
     val resumeAfterLongInterruption: Boolean = false,
@@ -49,6 +56,7 @@ private data class ReaderSettingsState(
     val fontScale: Float,
     val speechEngine: SpeechEngine,
     val speechRate: Float,
+    val pocketTtsVoice: String,
     val playbackGraceMinutes: Int,
     val resumeOnBluetoothReconnect: Boolean,
     val resumeAfterLongInterruption: Boolean,
@@ -57,6 +65,9 @@ private data class ReaderSettingsState(
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = LibraryRepository(application)
     private val publicationLoader = ReadiumPublicationLoader(application)
+    private val pocketModelManager = PocketTtsModelManager(application)
+    private val mutablePocketModels = MutableStateFlow(PocketModelUiState())
+    private var pocketInstallJob: Job? = null
     private val metadataJobs = mutableSetOf<String>()
     private val mutableSettings = MutableStateFlow(
         ReaderSettingsState(
@@ -65,6 +76,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             fontScale = AppPreferences.readerFontScale(application),
             speechEngine = AppPreferences.speechEngine(application),
             speechRate = AppPreferences.speechRate(application),
+            pocketTtsVoice = AppPreferences.pocketTtsVoice(application),
             playbackGraceMinutes = AppPreferences.playbackGraceMinutes(application),
             resumeOnBluetoothReconnect = AppPreferences.resumeOnBluetoothReconnect(application),
             resumeAfterLongInterruption = AppPreferences.resumeAfterLongInterruption(application),
@@ -90,14 +102,23 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             readerFontScale = settings.fontScale,
             speechEngine = settings.speechEngine,
             speechRate = settings.speechRate,
+            pocketTtsVoice = settings.pocketTtsVoice,
             playbackGraceMinutes = settings.playbackGraceMinutes,
             resumeOnBluetoothReconnect = settings.resumeOnBluetoothReconnect,
             resumeAfterLongInterruption = settings.resumeAfterLongInterruption,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryUiState())
-    val state: StateFlow<LibraryUiState> = combine(libraryState, PlaybackStateStore.state) { library, playback ->
-        library.copy(playback = playback)
+    val state: StateFlow<LibraryUiState> = combine(
+        libraryState,
+        PlaybackStateStore.state,
+        mutablePocketModels,
+    ) { library, playback, pocketModels ->
+        library.copy(playback = playback, pocketModels = pocketModels)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryUiState())
+
+    init {
+        refreshPocketModels()
+    }
 
     fun addFolder(uri: Uri) = launchOperation("add-folder") {
         repository.addFolder(uri)
@@ -184,9 +205,56 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun setSpeechEngine(engine: SpeechEngine) {
-        if (engine == SpeechEngine.POCKET || mutableSettings.value.speechEngine == engine) return
+        if (engine == SpeechEngine.POCKET && !mutablePocketModels.value.installed) {
+            mutableMessage.value = "Install the Pocket TTS model files before selecting Pocket TTS."
+            return
+        }
+        if (mutableSettings.value.speechEngine == engine) return
         AppPreferences.setSpeechEngine(getApplication(), engine)
         mutableSettings.value = mutableSettings.value.copy(speechEngine = engine)
+    }
+
+    fun setPocketTtsVoice(voice: String) {
+        if (voice !in AppPreferences.POCKET_TTS_VOICES || mutableSettings.value.pocketTtsVoice == voice) return
+        AppPreferences.setPocketTtsVoice(getApplication(), voice)
+        mutableSettings.value = mutableSettings.value.copy(pocketTtsVoice = voice)
+    }
+
+    fun refreshPocketModels() {
+        if (pocketInstallJob?.isActive == true) return
+        viewModelScope.launch(Dispatchers.IO) {
+            mutablePocketModels.value = pocketModelManager.status(mutablePocketModels.value.message)
+        }
+    }
+
+    fun installPocketModels() {
+        if (pocketInstallJob?.isActive == true) return
+        pocketInstallJob = viewModelScope.launch {
+            mutablePocketModels.update { it.copy(isInstalling = true, progress = 0f, message = null) }
+            try {
+                pocketModelManager.install { downloaded, total ->
+                    val progress = if (total > 0) (downloaded.toFloat() / total).coerceIn(0f, 1f) else 0f
+                    mutablePocketModels.update { it.copy(isInstalling = true, progress = progress) }
+                }
+                val installed = withContext(Dispatchers.IO) { pocketModelManager.status() }
+                mutablePocketModels.value = installed.copy(message = "Pocket TTS models are ready.")
+            } catch (error: CancellationException) {
+                val current = withContext(NonCancellable + Dispatchers.IO) {
+                    pocketModelManager.status("Pocket TTS installation cancelled.")
+                }
+                mutablePocketModels.value = current
+                throw error
+            } catch (error: Exception) {
+                val message = error.message ?: "Pocket TTS model installation failed."
+                val current = withContext(Dispatchers.IO) { pocketModelManager.status(message) }
+                mutablePocketModels.value = current
+            }
+        }
+    }
+
+    fun cancelPocketModelInstall() {
+        pocketInstallJob?.cancel()
+        pocketInstallJob = null
     }
 
     fun setSpeechRate(rate: Float) {

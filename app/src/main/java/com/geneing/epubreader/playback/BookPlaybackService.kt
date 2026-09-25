@@ -6,15 +6,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
-import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
-import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -41,6 +38,7 @@ import com.geneing.epubreader.data.BookFormat
 import com.geneing.epubreader.data.LibraryRepository
 import com.geneing.epubreader.reader.ReadiumPublicationLoader
 import com.geneing.epubreader.reader.ReaderActivity
+import dev.pockettts.PocketTts
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -49,28 +47,32 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import org.readium.navigator.media.common.DefaultMediaMetadataProvider
-import org.readium.navigator.media.tts.AndroidTtsNavigator
 import org.readium.navigator.media.tts.AndroidTtsNavigatorFactory
 import org.readium.navigator.media.tts.TtsNavigator
+import org.readium.navigator.media.tts.TtsNavigatorFactory
+import org.readium.navigator.media.tts.android.AndroidTtsEngine
 import org.readium.navigator.media.tts.android.AndroidTtsPreferences
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.coverFitting
 import org.readium.r2.shared.util.getOrElse
+import org.readium.r2.shared.util.Language
 import java.util.concurrent.TimeUnit
+import java.util.Locale
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalReadiumApi::class)
 class BookPlaybackService : MediaSessionService() {
     private val repository by lazy { LibraryRepository(applicationContext) }
     private val publicationLoader by lazy { ReadiumPublicationLoader(applicationContext) }
+    private val pocketTtsModelManager by lazy { PocketTtsModelManager(applicationContext) }
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
 
     private var placeholderPlayer: ExoPlayer? = null
     private var mediaSession: MediaSession? = null
     private var publication: Publication? = null
-    private var ttsNavigator: AndroidTtsNavigator? = null
+    private var ttsNavigator: TtsNavigator<*, *, *, *>? = null
     private var activeBookUri: String? = null
     private var foregroundBookTitle = ""
     private var graceJob: Job? = null
@@ -83,59 +85,7 @@ class BookPlaybackService : MediaSessionService() {
     private var wasPlayingBeforeHeadsetDisconnect = false
     private var disconnectedOutputWasBluetooth = false
     private var lastKnownBluetoothOutputConnected = false
-    private var audioFocusRequest: AudioFocusRequest? = null
-    private var audioFocusGranted = false
-    private var resumeAfterFocusGain = false
-    private var interruptionStartedAtMs: Long? = null
     private var hasPlaybackNotification = false
-
-    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { change ->
-        when (change) {
-            AudioManager.AUDIOFOCUS_GAIN -> {
-                audioFocusGranted = true
-                val interruptionDuration = interruptionStartedAtMs?.let {
-                    SystemClock.elapsedRealtime() - it
-                } ?: 0L
-                val wasInterrupted = resumeAfterFocusGain
-                val shouldResume = PlaybackResumePolicy.afterAudioFocusGain(
-                    playbackWasInterrupted = resumeAfterFocusGain,
-                    explicitlyPaused = explicitUserPause,
-                    headsetDisconnected = pausedForHeadsetDisconnect,
-                    interruptionDurationMs = interruptionDuration,
-                    resumeAfterLongInterruption = AppPreferences.resumeAfterLongInterruption(applicationContext),
-                    longInterruptionThresholdMs = LONG_INTERRUPTION_THRESHOLD_MS,
-                )
-                resumeAfterFocusGain = false
-                interruptionStartedAtMs = null
-                if (shouldResume) {
-                    PlaybackStateStore.update(PlaybackStateStore.state.value.copy(errorMessage = null))
-                    ttsNavigator?.play()
-                } else if (wasInterrupted) {
-                    abandonAudioFocus()
-                }
-            }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                audioFocusGranted = false
-                val navigator = ttsNavigator
-                if (navigator?.playback?.value?.playWhenReady == true && !explicitUserPause) {
-                    resumeAfterFocusGain = true
-                    interruptionStartedAtMs = SystemClock.elapsedRealtime()
-                    navigator.pause()
-                }
-            }
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                audioFocusGranted = false
-                resumeAfterFocusGain = false
-                interruptionStartedAtMs = null
-                if (ttsNavigator?.playback?.value?.playWhenReady == true) {
-                    explicitUserPause = false
-                    ttsNavigator?.pause()
-                }
-                abandonAudioFocus()
-            }
-        }
-    }
 
     private val skipBackCommand = SessionCommand(PlaybackServiceCommands.ACTION_SKIP_BACK, Bundle.EMPTY)
     private val skipForwardCommand = SessionCommand(PlaybackServiceCommands.ACTION_SKIP_FORWARD, Bundle.EMPTY)
@@ -342,41 +292,19 @@ class BookPlaybackService : MediaSessionService() {
                 val actualAuthor = book?.author?.takeIf(String::isNotBlank)
                     ?: opened.publication.metadata.authors.firstOrNull { it.name.isNotBlank() }?.name
                 foregroundBookTitle = actualTitle
-                val factory = AndroidTtsNavigatorFactory(
-                    application,
-                    opened.publication,
-                    metadataProvider = DefaultMediaMetadataProvider(
-                        title = actualTitle,
-                        author = actualAuthor,
-                    ),
-                ) ?: error("This EPUB does not provide readable text for narration.")
-                val navigator = factory.createNavigator(
-                    listener = object : TtsNavigator.Listener {
-                        override fun onStopRequested() {
-                            stopPlayback()
-                        }
-                    },
+                val navigator = createTtsNavigator(
+                    publication = opened.publication,
+                    title = actualTitle,
+                    author = actualAuthor,
                     initialLocator = initialLocator ?: opened.initialLocator,
-                    initialPreferences = AndroidTtsPreferences(
-                        speed = AppPreferences.speechRate(applicationContext).toDouble(),
-                    ),
-                ).getOrElse { error -> error(error.message) }
+                )
                 ttsNavigator = navigator
                 mediaSession?.setSessionActivity(createReaderPendingIntent(uriString, book?.displayName ?: displayName, book?.mimeType))
                 mediaSession?.setPlayer(ProgressPlayer(navigator.asMedia3Player()))
                 observePlayback(navigator, uriString, actualTitle, actualAuthor, book?.coverPath)
                 explicitUserPause = false
                 pausedForHeadsetDisconnect = false
-                if (requestAudioFocus()) {
-                    PlaybackStateStore.update(PlaybackStateStore.state.value.copy(errorMessage = null))
-                    navigator.play()
-                } else {
-                    PlaybackStateStore.update(
-                        PlaybackStateStore.state.value.copy(
-                            errorMessage = "Audio is in use by another app. Resume when it is available.",
-                        ),
-                    )
-                }
+                navigator.play()
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -392,8 +320,61 @@ class BookPlaybackService : MediaSessionService() {
         }
     }
 
+    private suspend fun createTtsNavigator(
+        publication: Publication,
+        title: String,
+        author: String?,
+        initialLocator: Locator?,
+    ): TtsNavigator<*, *, *, *> {
+        val metadataProvider = DefaultMediaMetadataProvider(title = title, author = author)
+        val listener = object : TtsNavigator.Listener {
+            override fun onStopRequested() {
+                stopPlayback()
+            }
+        }
+        val speechRate = AppPreferences.speechRate(applicationContext).toDouble()
+
+        return when (AppPreferences.speechEngine(applicationContext)) {
+            com.geneing.epubreader.data.SpeechEngine.ANDROID_SYSTEM -> {
+                val factory = AndroidTtsNavigatorFactory(
+                    application,
+                    publication,
+                    metadataProvider = metadataProvider,
+                ) ?: error("This EPUB does not provide readable text for narration.")
+                factory.createNavigator(
+                    listener = listener,
+                    initialLocator = initialLocator,
+                    initialPreferences = AndroidTtsPreferences(speed = speechRate),
+                ).getOrElse { error -> error(error.message) }
+            }
+            com.geneing.epubreader.data.SpeechEngine.POCKET -> {
+                val modelStatus = withContext(Dispatchers.IO) { pocketTtsModelManager.status() }
+                check(modelStatus.installed) {
+                    "Pocket TTS models are not installed (${modelStatus.missingFiles.size} files missing). Open Settings to install them."
+                }
+                val voice = AndroidTtsEngine.Voice.Id(
+                    PocketTts.voiceId(AppPreferences.pocketTtsVoice(applicationContext)),
+                )
+                val factory = TtsNavigatorFactory(
+                    application = application,
+                    publication = publication,
+                    ttsEngineProvider = PocketReadiumTtsEngineProvider(application),
+                    metadataProvider = metadataProvider,
+                ) ?: error("This EPUB does not provide readable text for narration.")
+                factory.createNavigator(
+                    listener = listener,
+                    initialLocator = initialLocator,
+                    initialPreferences = AndroidTtsPreferences(
+                        speed = speechRate,
+                        voices = mapOf(Language(Locale.US) to voice),
+                    ),
+                ).getOrElse { error -> error(error.message) }
+            }
+        }
+    }
+
     private fun observePlayback(
-        navigator: AndroidTtsNavigator,
+        navigator: TtsNavigator<*, *, *, *>,
         uriString: String,
         title: String,
         author: String?,
@@ -405,6 +386,7 @@ class BookPlaybackService : MediaSessionService() {
         playbackObserver = lifecycleScope.launch {
             navigator.playback.collect { playback ->
                 val isPlaying = playback.playWhenReady && playback.state !is org.readium.navigator.media.common.MediaNavigator.State.Ended
+                val wasPlaying = lastPlayWhenReady
                 lastPlayWhenReady = playback.playWhenReady
                 val previous = PlaybackStateStore.state.value
                 PlaybackStateStore.update(
@@ -419,14 +401,16 @@ class BookPlaybackService : MediaSessionService() {
                 )
                 if (isPlaying) {
                     graceJob?.cancel()
+                    longInterruptionJob?.cancel()
                     explicitUserPause = false
                 } else {
                     scheduleMiniPlayerExpiry()
                     if (playback.state is org.readium.navigator.media.common.MediaNavigator.State.Ended ||
                         playback.state is org.readium.navigator.media.common.MediaNavigator.State.Failure
                     ) {
-                        resumeAfterFocusGain = false
-                        abandonAudioFocus()
+                        longInterruptionJob?.cancel()
+                    } else if (wasPlaying && !explicitUserPause && !pausedForHeadsetDisconnect) {
+                        scheduleLongInterruptionResume(navigator)
                     }
                 }
                 refreshMediaNotification()
@@ -450,6 +434,22 @@ class BookPlaybackService : MediaSessionService() {
         }
     }
 
+    private fun scheduleLongInterruptionResume(navigator: TtsNavigator<*, *, *, *>) {
+        longInterruptionJob?.cancel()
+        longInterruptionJob = lifecycleScope.launch {
+            delay(LONG_INTERRUPTION_THRESHOLD_MS)
+            if (PlaybackResumePolicy.shouldResumeAfterLongInterruption(
+                    explicitlyPaused = explicitUserPause,
+                    headsetDisconnected = pausedForHeadsetDisconnect,
+                    resumeAfterLongInterruption = AppPreferences.resumeAfterLongInterruption(applicationContext),
+                ) && navigator === ttsNavigator && !navigator.playback.value.playWhenReady
+            ) {
+                // Readium's Media3 player requests audio focus for the resume attempt.
+                navigator.play()
+            }
+        }
+    }
+
     private fun togglePlayback() {
         val navigator = ttsNavigator ?: return
         if (navigator.playback.value.playWhenReady) pauseByUser() else resumePlayback()
@@ -458,27 +458,16 @@ class BookPlaybackService : MediaSessionService() {
     private fun resumePlayback() {
         explicitUserPause = false
         pausedForHeadsetDisconnect = false
-        resumeAfterFocusGain = false
-        interruptionStartedAtMs = null
-        if (requestAudioFocus()) {
-            PlaybackStateStore.update(PlaybackStateStore.state.value.copy(errorMessage = null))
-            ttsNavigator?.play()
-        } else {
-            PlaybackStateStore.update(
-                PlaybackStateStore.state.value.copy(
-                    errorMessage = "Audio is in use by another app. Resume when it is available.",
-                ),
-            )
-        }
+        longInterruptionJob?.cancel()
+        PlaybackStateStore.update(PlaybackStateStore.state.value.copy(errorMessage = null))
+        ttsNavigator?.play()
     }
 
     private fun pauseByUser() {
         explicitUserPause = true
         pausedForHeadsetDisconnect = false
-        resumeAfterFocusGain = false
-        interruptionStartedAtMs = null
+        longInterruptionJob?.cancel()
         ttsNavigator?.pause()
-        abandonAudioFocus()
     }
 
     private fun skipBackward() {
@@ -496,18 +485,14 @@ class BookPlaybackService : MediaSessionService() {
         disconnectedOutputWasBluetooth = isBluetooth
         pausedForHeadsetDisconnect = true
         explicitUserPause = false
-        resumeAfterFocusGain = false
-        interruptionStartedAtMs = null
+        longInterruptionJob?.cancel()
         navigator.pause()
-        abandonAudioFocus()
     }
 
     private fun stopPlayback() {
         graceJob?.cancel()
+        longInterruptionJob?.cancel()
         explicitUserPause = true
-        resumeAfterFocusGain = false
-        interruptionStartedAtMs = null
-        abandonAudioFocus()
         PlaybackStateStore.clear()
         closeActivePublication()
         mediaSession?.release()
@@ -553,29 +538,6 @@ class BookPlaybackService : MediaSessionService() {
         if (ttsNavigator?.playback?.value?.playWhenReady != true) {
             scheduleMiniPlayerExpiry()
         }
-    }
-
-    private fun requestAudioFocus(): Boolean {
-        if (audioFocusGranted) return true
-        val attributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-            .build()
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-            .setAudioAttributes(attributes)
-            .setWillPauseWhenDucked(true)
-            .setAcceptsDelayedFocusGain(false)
-            .setOnAudioFocusChangeListener(audioFocusChangeListener, Handler(Looper.getMainLooper()))
-            .build()
-        audioFocusRequest = request
-        audioFocusGranted = audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        return audioFocusGranted
-    }
-
-    private fun abandonAudioFocus() {
-        audioFocusRequest?.let(audioManager::abandonAudioFocusRequest)
-        audioFocusRequest = null
-        audioFocusGranted = false
     }
 
     private fun refreshMediaNotification() {
@@ -651,7 +613,7 @@ class BookPlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         graceJob?.cancel()
-        abandonAudioFocus()
+        longInterruptionJob?.cancel()
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
         runCatching { unregisterReceiver(noisyReceiver) }
         closeActivePublication()

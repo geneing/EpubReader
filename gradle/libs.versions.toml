@@ -10,6 +10,7 @@ documentfile = "1.1.0"
 fragment = "1.9.1"
 readium = "3.4.0"
 media3 = "1.11.1"
+litert = "2.2.0"
 desugar = "2.1.5"
 junit = "4.13.2"
 
@@ -36,6 +37,8 @@ readium-pdfium = { module = "org.readium.kotlin-toolkit:readium-adapter-pdfium",
 readium-tts = { module = "org.readium.kotlin-toolkit:readium-navigator-media-tts", version.ref = "readium" }
 androidx-media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
 androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
+litert-api = { module = "com.google.ai.edge.litert:litert-api", version.ref = "litert" }
+litert-runtime = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

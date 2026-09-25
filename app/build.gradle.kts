@@ -5,6 +5,12 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val liteRtNativeRuntime by configurations.creating {
+    isCanBeResolved = true
+    isCanBeConsumed = false
+    isTransitive = false
+}
+
 android {
     namespace = "com.geneing.epubreader"
     compileSdk = 37
@@ -53,6 +59,8 @@ dependencies {
     implementation(libs.readium.tts)
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.exoplayer)
+    implementation(project(":pockettts-service"))
+    add(liteRtNativeRuntime.name, libs.litert.runtime)
     ksp(libs.androidx.room.compiler)
     coreLibraryDesugaring(libs.android.desugar)
 
@@ -64,3 +72,26 @@ dependencies {
 
     testImplementation(libs.junit)
 }
+
+// LiteRT 2.2.0 publishes `litert` and `litert-api` AARs with the same manifest
+// namespace, which AGP 9 rejects. The Pocket library uses the API AAR; extract
+// only the pinned runtime .so files from the implementation AAR to avoid merging
+// its duplicate manifest while preserving the official runtime/JNI binaries.
+val unpackLiteRtNativeRuntime = tasks.register<Copy>("unpackLiteRtNativeRuntime") {
+    from({ zipTree(liteRtNativeRuntime.singleFile) }) {
+        include("jni/**/*.so")
+        eachFile {
+            relativePath = org.gradle.api.file.RelativePath(
+                true,
+                *relativePath.segments.drop(1).toTypedArray(),
+            )
+        }
+        includeEmptyDirs = false
+    }
+    into(layout.buildDirectory.dir("generated/litert-jni"))
+}
+
+android.sourceSets.getByName("main").jniLibs.srcDir(
+    layout.buildDirectory.dir("generated/litert-jni").get().asFile,
+)
+tasks.named("preBuild").configure { dependsOn(unpackLiteRtNativeRuntime) }

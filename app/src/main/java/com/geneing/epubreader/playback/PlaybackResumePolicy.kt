@@ -1,17 +1,13 @@
 package com.geneing.epubreader.playback
 
 internal object PlaybackResumePolicy {
-    fun afterAudioFocusGain(
-        playbackWasInterrupted: Boolean,
+    fun shouldResumeAfterLongInterruption(
         explicitlyPaused: Boolean,
         headsetDisconnected: Boolean,
-        interruptionDurationMs: Long,
         resumeAfterLongInterruption: Boolean,
-        longInterruptionThresholdMs: Long,
-    ): Boolean = playbackWasInterrupted &&
+    ): Boolean = resumeAfterLongInterruption &&
         !explicitlyPaused &&
-        !headsetDisconnected &&
-        (interruptionDurationMs <= longInterruptionThresholdMs || resumeAfterLongInterruption)
+        !headsetDisconnected
 
     fun afterBluetoothReconnect(
         disconnectedOutputWasBluetooth: Boolean,
