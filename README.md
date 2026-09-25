@@ -25,6 +25,6 @@ Development is centered on host AVDs using Android System TTS. A physical Pixel 
 
 ## Current status
 
-Initial Android implementation is on `feature/android-saf-library`. The Compose app has a SAF-backed library, recent/all-files and folder views, global reading settings, and Readium EPUB/PDF readers. Android System TTS can narrate EPUBs in the foreground with selection-based start and spoken-text highlighting; background/media-session playback and Pocket TTS remain upcoming. PDF narration is not implemented.
+Development is on `main`. The Compose app has a SAF-backed library with recent/all-files and folder views, global reading settings, and Readium EPUB/PDF readers. EPUB narration runs through a `MediaSessionService` with notification/lock-screen transport controls, selection- and double-tap-based start, spoken-sentence highlighting, and narration auto-follow. Both Android System TTS and Pocket TTS (LiteRT) are integrated. PDF narration is not implemented.
 
 Manual EPUB/PDF reader fixtures and their source notes are in [`tests/`](tests/README.md).
