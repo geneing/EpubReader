@@ -33,8 +33,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Pause
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Search
@@ -45,7 +43,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -81,7 +78,9 @@ import com.geneing.epubreader.data.LibraryRepository
 import com.geneing.epubreader.data.ReaderFontFamily
 import com.geneing.epubreader.playback.PlaybackServiceCommands
 import com.geneing.epubreader.playback.PlaybackStateStore
+import com.geneing.epubreader.playback.PlaybackUiState
 import com.geneing.epubreader.ui.EpubReaderTheme
+import com.geneing.epubreader.ui.PlaybackMiniPlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -135,6 +134,9 @@ class ReaderActivity : FragmentActivity() {
     private var playbackError by mutableStateOf<String?>(null)
     private var isNavigatorReady by mutableStateOf(false)
     private var isTtsPlaying by mutableStateOf(false)
+    private var playbackState by mutableStateOf(PlaybackUiState())
+    private var bookAuthor by mutableStateOf<String?>(null)
+    private var coverPath by mutableStateOf<String?>(null)
     private var currentProgress by mutableStateOf(0f)
     private var currentPage by mutableStateOf(1)
     private var pageCount by mutableStateOf(0)
@@ -184,6 +186,15 @@ class ReaderActivity : FragmentActivity() {
 
         setContent {
             EpubReaderTheme(AppPreferences.themeMode(this)) {
+                val activePlayback = playbackState
+                    .takeIf { it.bookUri == uri?.toString() && it.showMiniPlayer }
+                val displayedPlayback = activePlayback ?: PlaybackUiState(
+                    bookUri = uri?.toString(),
+                    title = bookTitle,
+                    author = bookAuthor,
+                    coverPath = coverPath,
+                    progress = currentProgress,
+                )
                 ReaderScreen(
                     title = bookTitle,
                     isLoading = isLoading,
@@ -192,7 +203,7 @@ class ReaderActivity : FragmentActivity() {
                     navigatorReady = isNavigatorReady,
                     navigatorContainerId = navigatorContainerId,
                     format = format,
-                    isTtsPlaying = isTtsPlaying,
+                    playback = displayedPlayback,
                     showRecenterButton = recenterButtonVisible,
                     currentProgress = currentProgress,
                     pageLabel = pageLabel,
@@ -202,6 +213,9 @@ class ReaderActivity : FragmentActivity() {
                     searchDialogOpen = searchDialogOpen,
                     tableOfContents = flattenTableOfContents(tableOfContents),
                     onTogglePlayback = ::togglePlayback,
+                    onSkipBack = { skipPlayback(forward = false) },
+                    onSkipForward = { skipPlayback(forward = true) },
+                    onStopPlayback = ::stopPlaybackFromReader,
                     onRecenter = ::recenterOnReadingPosition,
                     onPreviousPage = { navigateReader(forward = false) },
                     onNextPage = { navigateReader(forward = true) },
@@ -232,10 +246,12 @@ class ReaderActivity : FragmentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 PlaybackStateStore.state.collect { state ->
                     if (state.bookUri != uri?.toString()) {
+                        playbackState = PlaybackUiState()
                         isTtsPlaying = false
                         recenterButtonVisible = false
                         return@collect
                     }
+                    playbackState = state
                     isTtsPlaying = state.isPlaying
                     playbackError = state.errorMessage
                     val locator = state.currentLocator
@@ -268,6 +284,7 @@ class ReaderActivity : FragmentActivity() {
                     tableOfContents = opened.tableOfContents
                     bookTitle = opened.metadata.title?.takeIf(String::isNotBlank) ?: bookTitle
                     val author = opened.metadata.authors.joinToString { it.name }.takeIf(String::isNotBlank)
+                    bookAuthor = author
                     val cover = runCatching {
                         opened.coverFitting(Size(240, 360))
                     }.getOrNull()
@@ -279,7 +296,8 @@ class ReaderActivity : FragmentActivity() {
                             author = author,
                             coverBitmap = cover,
                         )
-                    }
+                        libraryRepository.findBook(uri.toString())?.coverPath
+                    }?.let { coverPath = it }
                     isLoading = false
                     installNavigatorIfReady()
                 } catch (error: Exception) {
@@ -520,6 +538,26 @@ class ReaderActivity : FragmentActivity() {
                 playbackError = error.message ?: "Could not start narration."
             }
         }
+    }
+
+    /** Skip controls only act while this book is the active narration session. */
+    private fun skipPlayback(forward: Boolean) {
+        if (!isActivePlayback()) return
+        PlaybackServiceCommands.send(
+            this,
+            if (forward) PlaybackServiceCommands.ACTION_SKIP_FORWARD else PlaybackServiceCommands.ACTION_SKIP_BACK,
+        )
+    }
+
+    private fun stopPlaybackFromReader() {
+        if (!isActivePlayback()) return
+        PlaybackServiceCommands.send(this, PlaybackServiceCommands.ACTION_STOP)
+    }
+
+    private fun isActivePlayback(): Boolean {
+        val uri = intent.getStringExtra(EXTRA_BOOK_URI) ?: return false
+        val playback = PlaybackStateStore.state.value
+        return playback.bookUri == uri && playback.showMiniPlayer
     }
 
     private fun startTtsAt(locator: Locator?, alignToSelection: Boolean = false) {
@@ -849,7 +887,7 @@ private fun ReaderScreen(
     navigatorReady: Boolean,
     navigatorContainerId: Int,
     format: BookFormat?,
-    isTtsPlaying: Boolean,
+    playback: PlaybackUiState,
     showRecenterButton: Boolean,
     currentProgress: Float,
     pageLabel: String,
@@ -860,6 +898,9 @@ private fun ReaderScreen(
     tableOfContents: List<Link>,
     tocDialogOpen: Boolean,
     onTogglePlayback: () -> Unit,
+    onSkipBack: () -> Unit,
+    onSkipForward: () -> Unit,
+    onStopPlayback: () -> Unit,
     onRecenter: () -> Unit,
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit,
@@ -976,27 +1017,13 @@ private fun ReaderScreen(
                         )
                     }
                 }
-            }
-        },
-        floatingActionButton = {
-            if (navigatorReady && errorMessage == null) {
-                ExtendedFloatingActionButton(
-                    text = {
-                        Text(
-                            when {
-                                format != BookFormat.EPUB -> "Narration unavailable"
-                                isTtsPlaying -> "Pause reading"
-                                else -> "Read aloud"
-                            },
-                        )
-                    },
-                    icon = {
-                        Icon(
-                            if (isTtsPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                            contentDescription = null,
-                        )
-                    },
-                    onClick = onTogglePlayback,
+            } else if (!isPdf && navigatorReady && errorMessage == null) {
+                PlaybackMiniPlayer(
+                    playback = playback,
+                    onSkipBack = onSkipBack,
+                    onToggle = onTogglePlayback,
+                    onSkipForward = onSkipForward,
+                    onStop = onStopPlayback,
                 )
             }
         },

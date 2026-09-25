@@ -43,6 +43,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - [x] Added narration auto-follow: the spoken sentence is kept inside a middle band, a real touch drag stops following and shows a recenter button, and recentering resumes following. Verified on Pixel 10 (95s+ of following without a false stop; drag stops follow; recenter works and follow resumes).
 - [x] Declared `POST_NOTIFICATIONS` and requested it at launch so the Media3 background-playback notification can be posted on Android 13+. Confirmed the permission is granted on Pixel 10.
 - [x] Registered the playback session with `MediaSessionService` so Media3 creates its internal notification controller. Verified on Pixel 10 that the Media3 `MediaStyle` notification replaces the temporary startup notification, displays previous/pause/next plus Stop, and appears on the lock screen. Play/pause and Stop actions were tapped and verified; previous/next sentence actions are exposed as notification actions and routed to the existing navigator commands.
+- [x] Replaced the reader's "Read aloud" floating button with the shared narration mini-player (its play button starts narration at the visible locator, then toggles play/pause). The library mini-player now opens the reader for the playing book when tapped, and launching the app with an active narration session opens the last text screen by default. Build and unit tests pass; device verification pending.
 
 ## Immediate next steps
 
