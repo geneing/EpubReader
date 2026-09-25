@@ -41,17 +41,16 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - [x] Made Pocket voices dynamic: voice files are discovered from the model pack's `voices/` subdirectory and shown in a Settings dropdown, the hardcoded voice list was removed, and the text-size slider now applies to narration.
 - [x] Added double-tap-to-read: a double tap on EPUB text resolves the sentence at the touch point (`caretRangeFromPoint`) and starts narration there with the yellow sentence highlight. Verified on Pixel 10.
 - [x] Added narration auto-follow: the spoken sentence is kept inside a middle band, a real touch drag stops following and shows a recenter button, and recentering resumes following. Verified on Pixel 10 (95s+ of following without a false stop; drag stops follow; recenter works and follow resumes).
-- [x] Declared `POST_NOTIFICATIONS` and requested it at launch so the Media3 background-playback notification can be posted on Android 13+. Confirmed the foreground notification now appears on Pixel 10.
+- [x] Declared `POST_NOTIFICATIONS` and requested it at launch so the Media3 background-playback notification can be posted on Android 13+. Confirmed the permission is granted on Pixel 10.
+- [x] Registered the playback session with `MediaSessionService` so Media3 creates its internal notification controller. Verified on Pixel 10 that the Media3 `MediaStyle` notification replaces the temporary startup notification, displays previous/pause/next plus Stop, and appears on the lock screen. Play/pause and Stop actions were tapped and verified; previous/next sentence actions are exposed as notification actions and routed to the existing navigator commands.
 
 ## Immediate next steps
 
-1. Make Media3 own the playback notification so it shows the mini-player controls (play/pause + skip back/forward). The app's manual "Preparing book playback" foreground notification is currently shown instead; Media3 only publishes its notification once it can resolve a connected notification controller and a non-empty player timeline, so verify the TTS session adapter's timeline/controller and stop posting the placeholder notification once Media3 can take over.
-2. Verify notification-shade and lock-screen controls during Pocket narration on Pixel 10 (play/pause, skip back/forward, stop) and confirm media-button/Bluetooth routing.
-3. Repeat the library, appearance, EPUB, and PDF smoke tests on a stable API 36 AVD and test the window-inset matrix.
-4. Replace percentage-only restoration with persisted Readium locator JSON and validate process recreation.
-5. Verify System TTS interruption/cancellation, Bluetooth headset disconnect/reconnect, and audio-focus behavior on an API 36 AVD and representative Bluetooth devices.
-6. Audit PdfiumAndroid/JitPack licensing and native ABI/16 KB page-size support; validate more representative PDFs before claiming broader support.
-7. Confirm audible Pocket TTS narration from the EPUB on Pixel 10; test per-book voice selection, pause/stop/cancellation, offline behavior, first-audio latency, and memory use.
+1. Repeat the library, appearance, EPUB, and PDF smoke tests on a stable API 36 AVD and test the window-inset matrix.
+2. Replace percentage-only restoration with persisted Readium locator JSON and validate process recreation.
+3. Verify System TTS interruption/cancellation, Bluetooth headset disconnect/reconnect, and audio-focus behavior on an API 36 AVD and representative Bluetooth devices.
+4. Audit PdfiumAndroid/JitPack licensing and native ABI/16 KB page-size support; validate more representative PDFs before claiming broader support.
+5. Confirm audible Pocket TTS narration from the EPUB on Pixel 10; test per-book voice selection, pause/stop/cancellation, offline behavior, first-audio latency, and memory use.
 
 ## Blockers / pending verification
 
@@ -62,5 +61,4 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - The supplied searchable PDF renders and resumes at the saved percentage with Readium's PDFium adapter. PDF TTS text extraction and synchronized highlighting remain unimplemented; scanned-PDF OCR is out of scope.
 - AGP 9.4 currently requires opting out of its new DSL to use Kotlin 2.4.20's external Android plugin. The opt-out is deprecated and must be revisited when AGP/Kotlin plugin compatibility improves.
 - The audio-focus/long-interruption refactor now builds and passes unit tests, debug assembly, and lint. Earlier Pixel logs showed both the service and Readium requesting audio focus; confirm on-device that the service now relies only on Readium's Media3 focus handling and does not compete with it.
-- Bluetooth disconnect/reconnect, notification/lock-screen/car behavior, and interruption recovery still need device verification. In-ear removal detection is not implemented because generic Bluetooth routing does not expose a reliable cross-device wear-state signal.
-- The media notification currently shows the service's manual "Preparing book playback" foreground notification rather than Media3's media-style notification, so notification/lock-screen transport controls are not yet visible. `POST_NOTIFICATIONS` is now granted, so the remaining issue is Media3 taking over the notification (connected notification controller + non-empty player timeline).
+- Bluetooth disconnect/reconnect, automotive media controls, and interruption recovery still need device verification. Notification-shade and lock-screen transport controls are verified on Pixel 10. In-ear removal detection is not implemented because generic Bluetooth routing does not expose a reliable cross-device wear-state signal.

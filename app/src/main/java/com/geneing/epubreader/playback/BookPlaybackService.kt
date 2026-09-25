@@ -205,10 +205,15 @@ class BookPlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         placeholderPlayer = ExoPlayer.Builder(this).build()
-        mediaSession = MediaSession.Builder(this, requireNotNull(placeholderPlayer))
+        val session = MediaSession.Builder(this, requireNotNull(placeholderPlayer))
             .setCallback(mediaSessionCallback)
             .setMediaButtonPreferences(mediaButtonPreferences())
             .build()
+        mediaSession = session
+        // This service owns a single session and may not receive an external controller
+        // connection before playback starts. Register it so Media3 can create its internal
+        // notification controller and publish the media-style notification.
+        addSession(session)
         setForegroundServiceTimeoutMs(
             TimeUnit.MINUTES.toMillis(AppPreferences.playbackGraceMinutes(this).toLong()),
         )
