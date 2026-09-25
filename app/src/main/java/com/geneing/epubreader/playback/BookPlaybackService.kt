@@ -62,6 +62,7 @@ import org.readium.r2.shared.util.getOrElse
 import org.readium.r2.shared.util.Language
 import java.util.concurrent.TimeUnit
 import java.util.Locale
+import java.io.File
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalReadiumApi::class)
@@ -218,7 +219,9 @@ class BookPlaybackService : MediaSessionService() {
             TimeUnit.MINUTES.toMillis(AppPreferences.playbackGraceMinutes(this).toLong()),
         )
         setShowNotificationForIdlePlayer(SHOW_NOTIFICATION_FOR_IDLE_PLAYER_ALWAYS)
-        setMediaNotificationProvider(ProgressMediaNotificationProvider(this))
+        setMediaNotificationProvider(
+            ProgressMediaNotificationProvider(this).apply { setSmallIcon(R.drawable.ic_stat_reader) },
+        )
         lastKnownBluetoothOutputConnected = bluetoothOutputConnected()
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, Handler(Looper.getMainLooper()))
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), RECEIVER_NOT_EXPORTED)
@@ -707,10 +710,32 @@ class BookPlaybackService : MediaSessionService() {
     }
 
     private inner class ProgressPlayer(player: Player) : ForwardingPlayer(player) {
-        override fun getMediaMetadata(): MediaMetadata = super.getMediaMetadata()
-            .buildUpon()
-            .setSubtitle("${(PlaybackStateStore.state.value.progress * 100).toInt()}% read")
-            .build()
+        private var artworkPath: String? = null
+        private var artworkData: ByteArray? = null
+
+        override fun getMediaMetadata(): MediaMetadata {
+            val builder = super.getMediaMetadata()
+                .buildUpon()
+                .setSubtitle("${(PlaybackStateStore.state.value.progress * 100).toInt()}% read")
+            artworkIfChanged()?.let { bytes ->
+                builder.setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+            }
+            return builder.build()
+        }
+
+        /**
+         * The derived cover is read once per book so the notification and lock
+         * screen show the same artwork as the in-app mini-player.
+         */
+        private fun artworkIfChanged(): ByteArray? {
+            val path = PlaybackStateStore.state.value.coverPath
+            if (path == artworkPath) return artworkData
+            artworkPath = path
+            artworkData = path?.let { candidate ->
+                runCatching { File(candidate).takeIf(File::isFile)?.readBytes() }.getOrNull()
+            }
+            return artworkData
+        }
     }
 
     private inner class ProgressMediaNotificationProvider(context: Context) :

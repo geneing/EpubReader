@@ -40,6 +40,7 @@ This is the long-term actionable backlog. `Progress.md` tracks the active milest
 
 ## Release readiness
 
+- [ ] Confirm the adaptive launcher icon renders across launcher shapes (circle/squircle/rounded-square) and that the monochrome themed icon and notification artwork look right on device.
 - [ ] Confirm app distribution plan, app license, model hosting/version policy, and all voice/model attribution requirements.
 - [ ] Validate privacy disclosures for SAF providers and Android System TTS engine network behavior.
 - [ ] Validate Pocket TTS voice/model attribution and license notices for distribution; model weights and voices have terms separate from the vendored MIT-licensed runtime.
