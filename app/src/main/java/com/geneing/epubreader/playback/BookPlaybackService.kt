@@ -643,6 +643,10 @@ class BookPlaybackService : MediaSessionService() {
             .putExtra(ReaderActivity.EXTRA_BOOK_URI, uri)
             .putExtra(ReaderActivity.EXTRA_BOOK_NAME, name)
             .putExtra(ReaderActivity.EXTRA_BOOK_MIME, mimeType)
+            .putExtra(
+                ReaderActivity.EXTRA_PROGRESS_PERCENT,
+                (PlaybackStateStore.state.value.progress * 100.0).toDouble(),
+            )
         return PendingIntent.getActivity(
             this,
             uri.hashCode(),

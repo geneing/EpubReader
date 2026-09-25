@@ -312,6 +312,7 @@ class ReaderActivity : FragmentActivity() {
         if (!containerAvailable || isFinishing || supportFragmentManager.isStateSaved) return
         if (supportFragmentManager.findFragmentByTag(NAVIGATOR_TAG) != null) {
             isNavigatorReady = true
+            seekToActivePlaybackIfReady()
             return
         }
 
@@ -346,6 +347,25 @@ class ReaderActivity : FragmentActivity() {
             is PdfNavigatorFragment<*, *> -> observeReadingProgress(navigator.currentLocator, openedBookUri(), isPdf = true)
         }
         isNavigatorReady = true
+        seekToActivePlaybackIfReady()
+    }
+
+    /**
+     * Playback state can arrive while the navigator is still installing, in which
+     * case the single `StateFlow` emission is missed and the reader would stay at
+     * the saved percentage. Once the navigator exists, jump to the locator the
+     * session is narrating right now.
+     */
+    private fun seekToActivePlaybackIfReady() {
+        val uri = intent.getStringExtra(EXTRA_BOOK_URI) ?: return
+        val playback = PlaybackStateStore.state.value
+        if (playback.bookUri != uri || !playback.showMiniPlayer) return
+        val locator = playback.currentLocator ?: return
+        observedPlaybackLocator = locator
+        lifecycleScope.launch {
+            applyTtsDecoration(locator)
+            followTtsLocator(locator)
+        }
     }
 
     private fun observeReadingProgress(locators: StateFlow<Locator>, bookUri: String, isPdf: Boolean) {
