@@ -20,21 +20,29 @@ interface ModelSource {
     fun locate(name: String): File?
 
     /**
-     * File names directly inside the [directory] under this source, or an empty
-     * list when the source cannot enumerate it. Used to discover voice files.
+     * Names this source can serve that start with [prefix] and end with [suffix].
+     *
+     * Optional: sources that cannot enumerate their contents (a bundled asset
+     * list, a release index) return an empty list rather than a wrong answer.
+     * Used by [VoiceCatalog] to find user-generated voice caches. A [prefix] may
+     * include a subdirectory (`voices/pt_voice_`), which a file-backed source
+     * resolves relative to itself.
      */
-    fun list(directory: String): List<String> = emptyList()
+    fun list(prefix: String, suffix: String): List<String> = emptyList()
 }
 
-/** Files already on disk — the external files dir (adb push) or an app dir. */
+/** Files already on disk - the external files dir (adb push) or an app dir. */
 class DirectorySource(private val dir: File) : ModelSource {
     override fun locate(name: String): File? = File(dir, name).takeIf { it.isFile }
 
-    override fun list(directory: String): List<String> =
-        File(dir, directory).listFiles()
-            ?.filter { it.isFile }
-            ?.map { it.name }
-            ?: emptyList()
+    override fun list(prefix: String, suffix: String): List<String> {
+        // The prefix may name a subdirectory; enumerate that instead of the root.
+        val cut = prefix.lastIndexOf('/')
+        val root = if (cut < 0) dir else File(dir, prefix.substring(0, cut))
+        val stem = if (cut < 0) prefix else prefix.substring(cut + 1)
+        return root.listFiles().orEmpty().map { it.name }
+            .filter { it.startsWith(stem) && it.endsWith(suffix) }
+    }
 }
 
 /**
@@ -63,13 +71,6 @@ class AssetModelSource(
         }
         return dst
     }
-
-    override fun list(directory: String): List<String> =
-        try {
-            assets.list(assetPrefix + directory)?.toList() ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
-        }
 }
 
 /** First source that has the file wins. Order is priority. */
@@ -78,9 +79,6 @@ class CompositeModelSource(private val sources: List<ModelSource>) : ModelSource
         for (s in sources) s.locate(name)?.let { return it }
         return null
     }
-
-    override fun list(directory: String): List<String> =
-        sources.flatMap { it.list(directory) }.distinct()
 }
 
 /** A versioned bundle of model files published as one release asset zip. */
@@ -205,12 +203,6 @@ class ReleaseModelSource(
 
     override fun locate(name: String): File? = File(cacheDir, name).takeIf { it.isFile }
 
-    override fun list(directory: String): List<String> =
-        File(cacheDir, directory).listFiles()
-            ?.filter { it.isFile }
-            ?.map { it.name }
-            ?: emptyList()
-
     /** Download whichever variants contain the missing [names]. */
     fun ensure(names: Collection<String>, onProgress: (Long, Long) -> Unit = { _, _ -> }) {
         val missing = names.filter { locate(it) == null }
@@ -263,19 +255,14 @@ class ModelStore(private val sources: List<ModelSource>) {
 
     fun locate(name: String): File? {
         for (s in sources) s.locate(name)?.let { return it }
-        // Older model packs stored voices flat at the root as `pt_voice_<name>.bin`.
-        val legacy = PocketTts.legacyFileName(name)
-        if (legacy != null) {
-            for (s in sources) s.locate(legacy)?.let { return it }
-        }
         return null
     }
 
-    /** File names directly inside [directory] across every source. */
-    fun list(directory: String): List<String> =
-        sources.flatMap { it.list(directory) }.distinct()
-
     fun exists(name: String): Boolean = locate(name) != null
+
+    /** Names any source can serve matching [prefix]/[suffix], deduplicated. */
+    fun list(prefix: String, suffix: String): List<String> =
+        sources.flatMap { it.list(prefix, suffix) }.distinct()
 
     fun file(name: String): File =
         locate(name) ?: throw FileNotFoundException(
@@ -301,27 +288,6 @@ class PocketTtsModels private constructor(
     fun ensure(names: Collection<String>, onProgress: (Long, Long) -> Unit = { _, _ -> }) {
         release?.ensure(names, onProgress)
             ?: throw IllegalStateException("this PocketTtsModels has no release source")
-    }
-
-    /**
-     * Voice names installed on disk: every `.bin` in [PocketTts.VOICES_DIR], plus
-     * legacy `pt_voice_<name>.bin` files at the root. Known catalog voices keep
-     * their published order; unknown names follow, sorted.
-     */
-    fun installedVoiceNames(): List<String> {
-        val names = LinkedHashSet<String>()
-        for (fileName in store.list(PocketTts.VOICES_DIR)) {
-            if (fileName.endsWith(".bin")) names += fileName.removeSuffix(".bin")
-        }
-        for (fileName in store.list("")) {
-            if (fileName.startsWith("pt_voice_") && fileName.endsWith(".bin")) {
-                names += fileName.removePrefix("pt_voice_").removeSuffix(".bin")
-            }
-        }
-        return names.sortedWith(compareBy({ name ->
-            val index = Voice.all().indexOfFirst { it.name == name }
-            if (index >= 0) index else Int.MAX_VALUE
-        }, { it }))
     }
 
     companion object {

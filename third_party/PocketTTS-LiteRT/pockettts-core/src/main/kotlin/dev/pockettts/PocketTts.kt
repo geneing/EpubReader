@@ -24,18 +24,7 @@ object PocketTts {
     const val UPS = 16               // 12.5 Hz -> 200 Hz
     const val MIMI_D = 512
     const val F_BLK = 64             // dec_tx block payload frames
-    const val F_HOP = 32             // dec_tx block hop
-    /**
-     * Emitted audio chunk sizes (frames) while ramping up, before the steady
-     * window. The first entry is also how long the first dec_tx block waits, so
-     * it is the time-to-first-audio knob. Small early chunks start playback
-     * sooner, but each has to outlast the wait for the next or playback starves,
-     * so the sizes grow. The cumulative targets (8, 16, 32, 48, 64, 96, 128,
-     * 160, 224) deliberately land on frame 0 up to [F_BLK] and on [F_HOP]
-     * multiples after, so the dec_tx stays on the canonical block chain the
-     * one-shot decode uses and the streaming audio keeps matching it.
-     */
-    val STREAM_RAMP = intArrayOf(8, 8, 16, 16, 16, 32, 32, 32, 64)
+    const val F_HOP = 32             // dec_tx block hop, and the streaming emit step
     const val S_BLK = F_BLK * UPS
     const val DEC_FRAMES = 256       // one-shot deconly window frames
     const val S_DEC = DEC_FRAMES * UPS
@@ -112,34 +101,19 @@ object PocketTts {
     const val NEUTRAL = "pt_neutral_latent_f32.bin"
     const val TOKENIZER = "pt_tokenizer.tsv"
 
+    fun voiceFile(name: String) = "pt_voice_$name.bin"
+
     /**
-     * Subdirectory of the model directory that holds voice state files. Voices
-     * are discovered by listing it (and the legacy root layout), not hardcoded.
+     * Subdirectory, one level below the model files, for voice caches that are
+     * fetched or cloned rather than bundled with the weights (`scripts/
+     * download_voices.py`, `scripts/create_voice.py`). Keeping them apart means a
+     * model refresh cannot clobber them and they need not be part of a model pack.
      */
     const val VOICES_DIR = "voices"
 
     /**
-     * Path of the voice state file for [name], relative to the model directory:
-     * `voices/<name>.bin`.
-     */
-    fun voiceFile(name: String) = "$VOICES_DIR/$name.bin"
-
-    /** Legacy flat layout, `pt_voice_<name>.bin`, still resolved for old installs. */
-    fun legacyVoiceFile(name: String) = "pt_voice_$name.bin"
-
-    /**
-     * Maps a canonical voice path back to the legacy flat file name, or null when
-     * [fileName] is not a voice path.
-     */
-    internal fun legacyFileName(fileName: String): String? {
-        if (!fileName.startsWith("$VOICES_DIR/") || !fileName.endsWith(".bin")) return null
-        return legacyVoiceFile(fileName.removePrefix("$VOICES_DIR/").removeSuffix(".bin"))
-    }
-
-    /**
-     * Locale voices bundled with the model (CC-BY-4.0 / CC0 only), used as the
-     * metadata catalog and as the fallback list before voices are discovered. The
-     * first is the default.
+     * Locale voices bundled with the model (CC-BY-4.0 / CC0 only), in the order
+     * the engine and the TTS service present them. The first is the default.
      */
     val VOICES = Voice.all().map { it.name }
 
@@ -148,18 +122,18 @@ object PocketTts {
      * keep speaking a character when it switches engines. The name after
      * `pockettts-` is matched case-insensitively against [VOICES].
      */
-    fun voiceId(name: String) = "pockettts-$name"
+    const val VOICE_ID_PREFIX = "pockettts-"
 
-    /**
-     * The voice [name] names, or null: `"alba"`, `"alba#female_1"`,
-     * `"pockettts-alba"`. Known voices get their published metadata; any other
-     * non-blank name is accepted so a voice discovered on disk can be spoken.
-     */
+    fun voiceId(name: String) = "$VOICE_ID_PREFIX$name"
+
+    /** Voice cache filename convention shared with `scripts/create_voice.py`. */
+    const val VOICE_PREFIX = "pt_voice_"
+    const val VOICE_SUFFIX = ".bin"
+
+    /** The voice [name] names, or null: `"alba"`, `"alba#female_1"`, `"pockettts-alba"`. */
     fun voiceNamed(name: String?): Voice? {
-        val bare = name?.trim()?.lowercase()?.substringBefore('#')?.removePrefix("pockettts-")
-            ?.takeIf { it.isNotEmpty() }
-            ?: return null
-        return Voice.forName(bare)
+        val bare = name?.trim()?.lowercase()?.substringBefore('#')?.removePrefix("pockettts-") ?: return null
+        return Voice.all().firstOrNull { it.name == bare }
     }
 
     /** hts/piper-sounding voice names, accepted as aliases when standard is skipped. */
@@ -185,13 +159,6 @@ data class Voice(
     override fun toString(): String = name
 
     companion object {
-        /**
-         * The catalog metadata for [name] when known, or a default [Voice] so a
-         * voice file discovered on disk can still be spoken.
-         */
-        fun forName(name: String): Voice =
-            all().firstOrNull { it.name == name } ?: Voice(name)
-
         /** All voices that ship with the model, with their published metadata. */
         fun all(): List<Voice> = listOf(
             Voice("alba"),

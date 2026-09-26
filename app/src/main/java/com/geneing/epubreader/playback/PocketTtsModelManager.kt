@@ -4,10 +4,13 @@ import android.content.Context
 import dev.pockettts.DirectorySource
 import dev.pockettts.Downloader
 import dev.pockettts.ModelManifest
+import dev.pockettts.PocketTts
 import dev.pockettts.PocketTtsConfig
 import dev.pockettts.PocketTtsEngine
 import dev.pockettts.PocketTtsModels
 import dev.pockettts.ReleaseModelSource
+import dev.pockettts.Voice
+import dev.pockettts.VoiceCatalog
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -47,7 +50,23 @@ class PocketTtsModelManager(context: Context) {
         DirectorySource(appModelDirectory),
     )
     private val config = PocketTtsConfig.default(appContext, models)
-    private val requiredFiles by lazy { PocketTtsEngine.requiredFiles(config).distinct() }
+    private val requiredFiles by lazy {
+        // Extra voice caches (downloaded/cloned) live under the app-owned voices/
+        // directory and are optional; only the model graphs and the bundled voices
+        // must be present for the engine to run and for install() to know what to
+        // fetch. Otherwise a custom voice under voices/ would be reported missing
+        // because it is not at the model root.
+        val nonVoice = PocketTtsEngine.requiredFiles(config)
+            .filterNot { it.startsWith(PocketTts.VOICE_PREFIX) }
+        val bundledVoices = Voice.all().map { PocketTts.voiceFile(it.name) }
+        (nonVoice + bundledVoices).distinct()
+    }
+
+    init {
+        // The voices/ directory must be created by the app so files pushed into it
+        // by adb are readable (see VoiceCatalog.ensureDir).
+        runCatching { VoiceCatalog.ensureDir(models) }
+    }
 
     fun status(message: String? = null): PocketModelUiState {
         val missing = requiredFiles.filterNot(models.store::exists)
@@ -57,7 +76,7 @@ class PocketTtsModelManager(context: Context) {
             requiredFiles = requiredFiles.size,
             missingFiles = missing,
             message = message,
-            voices = models.installedVoiceNames(),
+            voices = VoiceCatalog.installed(models).map { it.name },
         )
     }
 
