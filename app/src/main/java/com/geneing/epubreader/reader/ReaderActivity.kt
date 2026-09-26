@@ -10,9 +10,8 @@ import android.view.View
 import android.view.ViewConfiguration
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -33,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Search
@@ -52,6 +52,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -60,7 +61,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -123,6 +127,7 @@ import org.readium.adapter.pdfium.navigator.PdfiumDefaults
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.navigator.preferences.Theme as ReadiumTheme
 import org.json.JSONObject
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalReadiumApi::class)
@@ -155,7 +160,10 @@ class ReaderActivity : FragmentActivity() {
     private var searchResults by mutableStateOf<List<Locator>>(emptyList())
     private var searchError by mutableStateOf<String?>(null)
     private var tableOfContents by mutableStateOf<List<Link>>(emptyList())
+    private var readerSections by mutableStateOf<List<ReaderSection>>(emptyList())
     private var positionLocators: List<Locator> = emptyList()
+    private var isScrubbing = false
+    private var scrubJob: Job? = null
     private var publication: Publication? = null
     private var currentFormat: BookFormat? = null
     private var initialLocator: Locator? = null
@@ -225,6 +233,7 @@ class ReaderActivity : FragmentActivity() {
                     searchError = searchError,
                     searchDialogOpen = searchDialogOpen,
                     tableOfContents = flattenTableOfContents(tableOfContents),
+                    readerSections = readerSections,
                     onTogglePlayback = ::togglePlayback,
                     onSkipBack = { skipPlayback(forward = false) },
                     onSkipForward = { skipPlayback(forward = true) },
@@ -233,6 +242,9 @@ class ReaderActivity : FragmentActivity() {
                     onPreviousPage = { navigateReader(forward = false) },
                     onNextPage = { navigateReader(forward = true) },
                     onSeekProgress = ::seekToProgress,
+                    onScrubStart = ::beginScrub,
+                    onScrub = ::scrubToProgress,
+                    onScrubFinished = ::finishScrub,
                     onJumpToPage = ::jumpToPage,
                     onSearchRequested = { searchDialogOpen = true },
                     onSearch = ::searchPublication,
@@ -311,11 +323,13 @@ class ReaderActivity : FragmentActivity() {
                         libraryRepository.recentReadingStops(uri.toString())
                     }
                     val opened = requireNotNull(publication)
-                    positionLocators = withContext(Dispatchers.IO) {
-                        opened.positionsByReadingOrder().flatten()
+                    val positionsByResource = withContext(Dispatchers.IO) {
+                        opened.positionsByReadingOrder()
                     }
+                    positionLocators = positionsByResource.flatten()
                     pageCount = positionLocators.size
                     tableOfContents = opened.tableOfContents
+                    readerSections = buildReaderSections(opened, positionsByResource, tableOfContents)
                     bookTitle = opened.metadata.title?.takeIf(String::isNotBlank) ?: bookTitle
                     val author = opened.metadata.authors.joinToString { it.name }.takeIf(String::isNotBlank)
                     bookAuthor = author
@@ -407,6 +421,9 @@ class ReaderActivity : FragmentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 locators.collect { locator ->
+                    // While the fast-scroll thumb is dragging, the reader drives the
+                    // position so incoming navigator updates must not fight the thumb.
+                    if (isScrubbing) return@collect
                     if (!isPdf && scrollConfiguredHref != locator.href.toString()) {
                         scrollConfiguredHref = locator.href.toString()
                         configureTextViewport()
@@ -751,6 +768,39 @@ class ReaderActivity : FragmentActivity() {
         }
     }
 
+    /** The reader grabbed the fast-scroll thumb, so pause narration auto-follow. */
+    private fun beginScrub() {
+        stopAutoFollowing()
+        isScrubbing = true
+    }
+
+    /**
+     * Live preview while the thumb is dragged. Probing `locateProgression` on every
+     * frame is too expensive, so the nearest precomputed position is used and the
+     * calls are throttled. Playback seeking is deferred to [finishScrub].
+     */
+    private fun scrubToProgress(progress: Float) {
+        currentProgress = progress.coerceIn(0f, 1f)
+        scrubJob?.cancel()
+        scrubJob = lifecycleScope.launch {
+            delay(SCRUB_THROTTLE_MS)
+            val locator = locatorForProgress(currentProgress) ?: return@launch
+            currentVisualNavigator()?.go(locator, animated = false)
+        }
+    }
+
+    private fun finishScrub(progress: Float) {
+        scrubJob?.cancel()
+        isScrubbing = false
+        seekToProgress(progress)
+    }
+
+    private fun locatorForProgress(progress: Float): Locator? {
+        if (positionLocators.isEmpty()) return null
+        val index = (progress.coerceIn(0f, 1f) * (positionLocators.size - 1)).roundToInt()
+        return positionLocators.getOrNull(index)
+    }
+
     private fun jumpToPage(page: Int) {
         val locator = positionLocators.getOrNull(page - 1)
         if (locator == null) {
@@ -823,6 +873,41 @@ class ReaderActivity : FragmentActivity() {
         append(links)
     }
 
+    /**
+     * Builds the section anchors shown in the fast-scroll popup. Each reading-order
+     * resource is a section (the usual EPUB chapter granularity); its title comes
+     * from the table of contents when available, and its progression from the first
+     * computed position in that resource.
+     */
+    private fun buildReaderSections(
+        publication: Publication,
+        positionsByResource: List<List<Locator>>,
+        tableOfContents: List<Link>,
+    ): List<ReaderSection> {
+        val titlesByHref = HashMap<String, String>()
+        fun collect(links: List<Link>) {
+            links.forEach { link ->
+                link.title?.takeIf(String::isNotBlank)?.let { title ->
+                    titlesByHref.putIfAbsent(link.href.toString().substringBefore('#'), title)
+                }
+                collect(link.children)
+            }
+        }
+        collect(tableOfContents)
+
+        val readingOrder = publication.readingOrder
+        return readingOrder.mapIndexed { index, link ->
+            val href = link.href.toString().substringBefore('#')
+            val progression = positionsByResource.getOrNull(index)
+                ?.firstOrNull()?.locations?.totalProgression?.toFloat()
+                ?: if (readingOrder.size > 1) index.toFloat() / (readingOrder.size - 1) else 0f
+            val title = titlesByHref[href]
+                ?: link.title?.takeIf(String::isNotBlank)
+                ?: "Chapter ${index + 1}"
+            ReaderSection(title = title, progression = progression.coerceIn(0f, 1f))
+        }.sortedBy { it.progression }
+    }
+
     private fun epubPreferences(): EpubPreferences {
         val family = when (AppPreferences.readerFontFamily(this)) {
             ReaderFontFamily.BOOK_DEFAULT -> null
@@ -845,6 +930,8 @@ class ReaderActivity : FragmentActivity() {
 
     override fun onDestroy() {
         (currentNavigatorFragment() as? VisualNavigator)?.removeInputListener(readerInputListener)
+        scrubJob?.cancel()
+        scrubJob = null
         currentSearch?.close()
         currentSearch = null
         publication?.close()
@@ -869,6 +956,7 @@ class ReaderActivity : FragmentActivity() {
         private const val MAX_SEARCH_RESULTS = 100
         private const val DOUBLE_TAP_TIMEOUT_MS = 300L
         private const val RESOURCE_LOAD_SETTLE_MS = 450L
+        private const val SCRUB_THROTTLE_MS = 70L
 
         /**
          * Finds the sentence under the tapped point (device pixels) and returns
@@ -1057,6 +1145,7 @@ private fun ReaderScreen(
     searchError: String?,
     searchDialogOpen: Boolean,
     tableOfContents: List<Link>,
+    readerSections: List<ReaderSection>,
     tocDialogOpen: Boolean,
     onTogglePlayback: () -> Unit,
     onSkipBack: () -> Unit,
@@ -1066,6 +1155,9 @@ private fun ReaderScreen(
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit,
     onSeekProgress: (Float) -> Unit,
+    onScrubStart: () -> Unit,
+    onScrub: (Float) -> Unit,
+    onScrubFinished: (Float) -> Unit,
     onJumpToPage: (Int) -> Unit,
     onSearchRequested: () -> Unit,
     onSearch: (String) -> Unit,
@@ -1086,6 +1178,7 @@ private fun ReaderScreen(
     var searchQuery by remember { mutableStateOf("") }
     var sliderPosition by remember(currentProgress) { mutableStateOf(currentProgress.coerceIn(0f, 1f)) }
     var scrollBarVisible by remember { mutableStateOf(false) }
+    var fastScrollActive by remember { mutableStateOf(false) }
     val pageUnit = if (format == BookFormat.PDF) "page" else "location"
     val isPdf = format == BookFormat.PDF
 
@@ -1212,12 +1305,22 @@ private fun ReaderScreen(
             )
 
             if (!isPdf && navigatorReady && errorMessage == null) {
-                VerticalScrollIndicator(
+                FastScrollIndicator(
                     progress = currentProgress,
-                    visible = scrollBarVisible,
+                    sections = readerSections,
+                    active = scrollBarVisible || fastScrollActive,
+                    onScrubStart = {
+                        fastScrollActive = true
+                        onScrubStart()
+                    },
+                    onScrub = onScrub,
+                    onScrubFinished = { fraction ->
+                        fastScrollActive = false
+                        onScrubFinished(fraction)
+                    },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .padding(end = 3.dp)
+                        .padding(end = 2.dp)
                         .fillMaxHeight(),
                 )
             }
@@ -1234,6 +1337,22 @@ private fun ReaderScreen(
                     Icon(
                         Icons.Outlined.VerticalAlignCenter,
                         contentDescription = "Jump to where narration is",
+                    )
+                }
+            }
+
+            if (navigatorReady && errorMessage == null && tableOfContents.isNotEmpty()) {
+                SmallFloatingActionButton(
+                    onClick = onTocRequested,
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.List,
+                        contentDescription = "Chapters",
                     )
                 }
             }
@@ -1430,39 +1549,119 @@ private fun ReaderScreen(
     }
 }
 
+private data class ReaderSection(val title: String, val progression: Float)
+
+/**
+ * A draggable fast-scroll thumb pinned to the right edge. Dragging the thumb seeks
+ * directly by publication progression (no velocity flinging) and a floating bubble
+ * shows the chapter/section the thumb is over. The thumb stays draggable even when
+ * the track is idle so it is always reachable.
+ */
 @Composable
-private fun VerticalScrollIndicator(
+private fun FastScrollIndicator(
     progress: Float,
-    visible: Boolean,
+    sections: List<ReaderSection>,
+    active: Boolean,
+    onScrubStart: () -> Unit,
+    onScrub: (Float) -> Unit,
+    onScrubFinished: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(),
-        exit = fadeOut(),
-        modifier = modifier,
-    ) {
-        BoxWithConstraints(
+    BoxWithConstraints(modifier = modifier) {
+        val density = LocalDensity.current
+        val thumbHeight = 56.dp
+        val travel = (maxHeight - thumbHeight).coerceAtLeast(0.dp)
+        val travelPx = with(density) { travel.toPx() }
+        val latestProgress by rememberUpdatedState(progress.coerceIn(0f, 1f))
+        val thumbAlpha by animateFloatAsState(
+            targetValue = if (active) 0.9f else 0.4f,
+            label = "fastScrollThumbAlpha",
+        )
+        var scrubFraction by remember { mutableStateOf<Float?>(null) }
+        val displayFraction = scrubFraction ?: latestProgress
+
+        // Touch target is wider than the visual thumb; the visible bar sits at the edge.
+        Box(
             modifier = Modifier
-                .width(3.dp)
+                .align(Alignment.CenterEnd)
+                .width(28.dp)
                 .fillMaxHeight()
-                .background(
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-                    RoundedCornerShape(2.dp),
-                ),
+                .pointerInput(travelPx) {
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            onScrubStart()
+                            scrubFraction = latestProgress
+                        },
+                        onDragEnd = {
+                            scrubFraction?.let(onScrubFinished)
+                            scrubFraction = null
+                        },
+                        onDragCancel = { scrubFraction = null },
+                    ) { change, dragAmount ->
+                        change.consume()
+                        val start = scrubFraction ?: latestProgress
+                        val fraction = if (travelPx > 0f) {
+                            (start + dragAmount / travelPx).coerceIn(0f, 1f)
+                        } else {
+                            start
+                        }
+                        scrubFraction = fraction
+                        onScrub(fraction)
+                    }
+                },
         ) {
-            val thumbHeight = 56.dp
-            val travel = (maxHeight - thumbHeight).coerceAtLeast(0.dp)
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(thumbHeight)
-                    .offset(y = travel * progress.coerceIn(0f, 1f))
+                    .align(Alignment.CenterEnd)
+                    .width(4.dp)
+                    .fillMaxHeight()
                     .background(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
                         RoundedCornerShape(2.dp),
                     ),
             )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(y = travel * displayFraction)
+                    .width(6.dp)
+                    .height(thumbHeight)
+                    .background(
+                        MaterialTheme.colorScheme.primary.copy(alpha = thumbAlpha),
+                        RoundedCornerShape(3.dp),
+                    ),
+            )
+        }
+
+        if (scrubFraction != null && sections.isNotEmpty()) {
+            val current = sections.lastOrNull { it.progression <= displayFraction }
+                ?: sections.first()
+            val bubbleY = (travel * displayFraction)
+                .coerceIn(0.dp, (maxHeight - 76.dp).coerceAtLeast(0.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.inverseSurface,
+                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                shape = RoundedCornerShape(12.dp),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-8).dp, y = bubbleY)
+                    .width(200.dp),
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Text(
+                        text = current.title,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "${(displayFraction * 100).roundToInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.8f),
+                    )
+                }
+            }
         }
     }
 }
