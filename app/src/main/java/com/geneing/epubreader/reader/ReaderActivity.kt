@@ -38,6 +38,8 @@ import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.VerticalAlignCenter
 import androidx.compose.material.icons.outlined.Book
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -64,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -75,6 +78,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.geneing.epubreader.data.AppPreferences
 import com.geneing.epubreader.data.BookFormat
 import com.geneing.epubreader.data.LibraryRepository
+import com.geneing.epubreader.data.ReadingStop
 import com.geneing.epubreader.data.ReaderFontFamily
 import com.geneing.epubreader.playback.PlaybackServiceCommands
 import com.geneing.epubreader.playback.PlaybackStateStore
@@ -82,6 +86,8 @@ import com.geneing.epubreader.playback.PlaybackUiState
 import com.geneing.epubreader.ui.EpubReaderTheme
 import com.geneing.epubreader.ui.PlaybackMiniPlayer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -141,6 +147,9 @@ class ReaderActivity : FragmentActivity() {
     private var currentPage by mutableStateOf(1)
     private var pageCount by mutableStateOf(0)
     private var pageLabel by mutableStateOf("Preparing location…")
+    private var lastReadLocator by mutableStateOf<Locator?>(null)
+    private var readingStops by mutableStateOf<List<ReadingStop>>(emptyList())
+    private var readingHistoryOpen by mutableStateOf(false)
     private var searchDialogOpen by mutableStateOf(false)
     private var tocDialogOpen by mutableStateOf(false)
     private var searchResults by mutableStateOf<List<Locator>>(emptyList())
@@ -153,6 +162,7 @@ class ReaderActivity : FragmentActivity() {
     private var containerAvailable = false
     private var currentSearch: SearchIterator? = null
     private var observedPlaybackLocator: Locator? = null
+    private var scrollConfiguredHref: String? = null
     private var autoFollowReadingPosition by mutableStateOf(true)
     private var recenterButtonVisible by mutableStateOf(false)
     private var lastTapAt = 0L
@@ -208,6 +218,9 @@ class ReaderActivity : FragmentActivity() {
                     currentProgress = currentProgress,
                     pageLabel = pageLabel,
                     pageCount = pageCount,
+                    lastReadLocator = lastReadLocator,
+                    readingStops = readingStops,
+                    readingHistoryOpen = readingHistoryOpen,
                     searchResults = searchResults,
                     searchError = searchError,
                     searchDialogOpen = searchDialogOpen,
@@ -226,6 +239,16 @@ class ReaderActivity : FragmentActivity() {
                     onSearchResultSelected = ::goToLocator,
                     onTocRequested = { tocDialogOpen = true },
                     onTocItemSelected = ::goToLink,
+                    onReadingHistoryRequested = ::openReadingHistory,
+                    onLastReadSelected = {
+                        lastReadLocator?.let(::goToLocator)
+                        readingHistoryOpen = false
+                    },
+                    onReadingStopSelected = { locator ->
+                        goToLocator(locator)
+                        readingHistoryOpen = false
+                    },
+                    onDismissReadingHistory = { readingHistoryOpen = false },
                     tocDialogOpen = tocDialogOpen,
                     onDismissSearch = {
                         searchDialogOpen = false
@@ -257,6 +280,7 @@ class ReaderActivity : FragmentActivity() {
                     val locator = state.currentLocator
                     if (locator != null && locator != observedPlaybackLocator) {
                         observedPlaybackLocator = locator
+                        currentProgress = state.progress
                         applyTtsDecoration(locator)
                         if (autoFollowReadingPosition) followTtsLocator(locator)
                     }
@@ -271,11 +295,21 @@ class ReaderActivity : FragmentActivity() {
         } else {
             lifecycleScope.launch {
                 try {
+                    val savedLocator = withContext(Dispatchers.IO) {
+                        libraryRepository.lastReadingPosition(uri.toString())
+                    }
+                    lastReadLocator = savedLocator
                     val openedPublication = withContext(Dispatchers.IO) {
                         loader.open(uri, intent.getDoubleExtra(EXTRA_PROGRESS_PERCENT, 0.0))
                     }
                     publication = openedPublication.publication
-                    initialLocator = openedPublication.initialLocator
+                    initialLocator = savedLocator
+                        ?: intent.getStringExtra(EXTRA_INITIAL_LOCATOR_JSON)
+                            ?.let { runCatching { Locator.fromJSON(JSONObject(it)) }.getOrNull() }
+                        ?: openedPublication.initialLocator
+                    readingStops = withContext(Dispatchers.IO) {
+                        libraryRepository.recentReadingStops(uri.toString())
+                    }
                     val opened = requireNotNull(publication)
                     positionLocators = withContext(Dispatchers.IO) {
                         opened.positionsByReadingOrder().flatten()
@@ -328,6 +362,7 @@ class ReaderActivity : FragmentActivity() {
                     initialPreferences = epubPreferences(),
                     configuration = EpubNavigatorFragment.Configuration(
                         shouldApplyInsetsPadding = false,
+                        disablePageTurnsWhileScrolling = true,
                     ),
                 ) to EpubNavigatorFragment::class.java
             BookFormat.PDF -> PdfNavigatorFactory(openedPublication, pdfiumEngineProvider)
@@ -372,8 +407,24 @@ class ReaderActivity : FragmentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 locators.collect { locator ->
+                    if (!isPdf && scrollConfiguredHref != locator.href.toString()) {
+                        scrollConfiguredHref = locator.href.toString()
+                        configureTextViewport()
+                    }
+                    val playback = PlaybackStateStore.state.value
+                    val narrationOwnsPosition = playback.bookUri == bookUri && playback.isPlaying
+                    if (!narrationOwnsPosition) {
+                        lastReadLocator = locator
+                        withContext(Dispatchers.IO) {
+                            libraryRepository.updateReadingPosition(bookUri, locator)
+                        }
+                    }
                     locator.locations.totalProgression?.let { progress ->
-                        currentProgress = progress.toFloat().coerceIn(0f, 1f)
+                        currentProgress = if (narrationOwnsPosition) {
+                            playback.progress
+                        } else {
+                            progress.toFloat().coerceIn(0f, 1f)
+                        }
                         if (isPdf) {
                             currentPage = locator.locations.position
                                 ?: ((currentProgress * (pageCount - 1)).toInt() + 1).coerceAtLeast(1)
@@ -383,13 +434,71 @@ class ReaderActivity : FragmentActivity() {
                                 ?: ((currentProgress * (pageCount - 1)).toInt() + 1).coerceAtLeast(1)
                             pageLabel = "Location $currentPage of $pageCount"
                         }
-                        withContext(Dispatchers.IO) {
-                            libraryRepository.updateReadingProgress(bookUri, progress)
-                        }
                     }
                 }
             }
         }
+    }
+
+    private fun configureTextViewport() {
+        val fragment = currentNavigatorFragment() as? EpubNavigatorFragment ?: return
+        lifecycleScope.launch {
+            fragment.evaluateJavascript(
+                """(function(){
+                  var root = document.scrollingElement || document.documentElement;
+                  var style = document.getElementById('epubreader-scroll-fix');
+                  if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'epubreader-scroll-fix';
+                    style.textContent = 'html, body { touch-action: pan-y !important; overflow-x: hidden !important; max-height: none !important; }';
+                    (document.head || document.documentElement).appendChild(style);
+                  }
+                  root.style.setProperty('overflow-y', 'auto', 'important');
+                  root.style.setProperty('max-height', 'none', 'important');
+                  if (document.body) {
+                    document.body.style.setProperty('overflow-y', 'visible', 'important');
+                    document.body.style.setProperty('max-height', 'none', 'important');
+                  }
+                  return true;
+                })()""".trimIndent(),
+            )
+        }
+    }
+
+    private fun openReadingHistory() {
+        readingHistoryOpen = true
+        val uri = intent.getStringExtra(EXTRA_BOOK_URI) ?: return
+        lifecycleScope.launch {
+            val current = withContext(Dispatchers.IO) {
+                libraryRepository.lastReadingPosition(uri)
+            }
+            if (current != null) lastReadLocator = current
+            readingStops = withContext(Dispatchers.IO) {
+                libraryRepository.recentReadingStops(uri)
+            }
+        }
+    }
+
+    override fun onStop() {
+        val playback = PlaybackStateStore.state.value
+        if (!playback.isPlaying) currentReadingLocator()?.let { locator ->
+            val uri = intent.getStringExtra(EXTRA_BOOK_URI)
+            if (uri != null) {
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                    runCatching { libraryRepository.recordReadingStop(uri, locator) }
+                }
+            }
+        }
+        super.onStop()
+    }
+
+    private fun currentReadingLocator(): Locator? {
+        val uri = intent.getStringExtra(EXTRA_BOOK_URI)
+        val playback = PlaybackStateStore.state.value
+        if (playback.bookUri == uri && playback.isPlaying) {
+            playback.currentLocator?.let { return it }
+        }
+        return currentVisualNavigator()?.currentLocator?.value ?: lastReadLocator
     }
 
     private fun openedBookUri(): String = requireNotNull(intent.getStringExtra(EXTRA_BOOK_URI))
@@ -426,6 +535,13 @@ class ReaderActivity : FragmentActivity() {
             if (event.type == DragEvent.Type.Start) {
                 stopAutoFollowing()
             }
+            if (
+                event.type == DragEvent.Type.End &&
+                event.offset.y < -40f &&
+                kotlin.math.abs(event.offset.y) > kotlin.math.abs(event.offset.x) * 1.25f
+            ) {
+                advanceToNextChapterAtScrollEnd()
+            }
             return false
         }
     }
@@ -435,6 +551,27 @@ class ReaderActivity : FragmentActivity() {
         if (!isTtsPlaying || !autoFollowReadingPosition) return
         autoFollowReadingPosition = false
         recenterButtonVisible = true
+    }
+
+    private fun advanceToNextChapterAtScrollEnd() {
+        val fragment = currentNavigatorFragment() as? EpubNavigatorFragment ?: return
+        val current = fragment.currentLocator.value
+        lifecycleScope.launch {
+            delay(120)
+            val atEnd = runCatching {
+                fragment.evaluateJavascript(
+                    """(function(){var e=document.scrollingElement||document.documentElement;return e.scrollTop+window.innerHeight>=e.scrollHeight-12;})()""",
+                )?.trim()?.trim('"') == "true"
+            }.getOrDefault(false)
+            if (!atEnd) return@launch
+            val openedPublication = publication ?: return@launch
+            val currentIndex = openedPublication.readingOrder.indexOfFirst {
+                it.href.toString().substringBefore('#') == current.href.toString().substringBefore('#')
+            }
+            if (currentIndex < 0) return@launch
+            val nextLink = openedPublication.readingOrder.getOrNull(currentIndex + 1) ?: return@launch
+            openedPublication.locatorFromLink(nextLink)?.let { fragment.go(it, animated = false) }
+        }
     }
 
     private fun startReadAloudAtPoint(point: PointF) {
@@ -725,6 +862,7 @@ class ReaderActivity : FragmentActivity() {
         const val EXTRA_BOOK_NAME = "book_name"
         const val EXTRA_BOOK_MIME = "book_mime"
         const val EXTRA_PROGRESS_PERCENT = "progress_percent"
+        const val EXTRA_INITIAL_LOCATOR_JSON = "initial_locator_json"
         private const val NAVIGATOR_TAG = "readium-epub-navigator"
         private const val TTS_DECORATION_ID = "tts-current-utterance"
         private const val TTS_DECORATION_GROUP = "tts"
@@ -912,6 +1050,9 @@ private fun ReaderScreen(
     currentProgress: Float,
     pageLabel: String,
     pageCount: Int,
+    lastReadLocator: Locator?,
+    readingStops: List<ReadingStop>,
+    readingHistoryOpen: Boolean,
     searchResults: List<Locator>,
     searchError: String?,
     searchDialogOpen: Boolean,
@@ -931,6 +1072,10 @@ private fun ReaderScreen(
     onSearchResultSelected: (Locator) -> Unit,
     onTocRequested: () -> Unit,
     onTocItemSelected: (Link) -> Unit,
+    onReadingHistoryRequested: () -> Unit,
+    onLastReadSelected: () -> Unit,
+    onReadingStopSelected: (Locator) -> Unit,
+    onDismissReadingHistory: () -> Unit,
     onDismissSearch: () -> Unit,
     onDismissToc: () -> Unit,
     onContainerAvailable: () -> Unit,
@@ -966,6 +1111,12 @@ private fun ReaderScreen(
                     }
                     IconButton(onClick = onSearchRequested) {
                         Icon(Icons.Outlined.Search, contentDescription = "Find in book")
+                    }
+                    IconButton(
+                        onClick = onReadingHistoryRequested,
+                        enabled = navigatorReady && errorMessage == null,
+                    ) {
+                        Icon(Icons.Outlined.History, contentDescription = "Reading positions")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -1220,6 +1371,61 @@ private fun ReaderScreen(
                 }
             },
             confirmButton = { TextButton(onClick = onDismissToc) { Text("Close") } },
+        )
+    }
+
+    if (readingHistoryOpen) {
+        AlertDialog(
+            onDismissRequest = onDismissReadingHistory,
+            title = { Text("Reading positions") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    if (lastReadLocator != null) {
+                        TextButton(onClick = onLastReadSelected, modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text("Go to last read position", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "${((lastReadLocator.locations.totalProgression ?: 0.0) * 100).toInt()}% · ${lastReadLocator.text.highlight?.takeIf(String::isNotBlank) ?: lastReadLocator.title ?: lastReadLocator.href.toString()}",
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                        if (readingStops.isNotEmpty()) HorizontalDivider()
+                    }
+                    readingStops.forEach { stop ->
+                        TextButton(
+                            onClick = { onReadingStopSelected(stop.locator) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    stop.locator.text.highlight?.takeIf(String::isNotBlank)
+                                        ?: stop.locator.title
+                                        ?: "${((stop.locator.locations.totalProgression ?: 0.0) * 100).toInt()}% of book",
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    java.text.DateFormat.getDateTimeInstance().format(java.util.Date(stop.createdAt)),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    if (lastReadLocator == null && readingStops.isEmpty()) {
+                        Text("Your reading positions will appear here.")
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = onDismissReadingHistory) { Text("Close") } },
         )
     }
 }

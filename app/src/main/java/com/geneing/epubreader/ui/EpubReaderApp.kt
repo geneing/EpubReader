@@ -372,6 +372,7 @@ private fun openBook(context: android.content.Context, book: BookEntity) {
                 putExtra(ReaderActivity.EXTRA_BOOK_NAME, book.displayName)
                 putExtra(ReaderActivity.EXTRA_BOOK_MIME, book.mimeType)
                 putExtra(ReaderActivity.EXTRA_PROGRESS_PERCENT, book.progressPercent)
+                putExtra(ReaderActivity.EXTRA_INITIAL_LOCATOR_JSON, book.lastLocatorJson)
             },
         )
     }

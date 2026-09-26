@@ -10,8 +10,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import org.readium.r2.shared.publication.Locator
 import java.io.File
 import java.security.MessageDigest
+
+data class ReadingStop(
+    val locator: Locator,
+    val createdAt: Long,
+)
 
 class LibraryRepository(context: Context) {
     private val appContext = context.applicationContext
@@ -55,6 +62,7 @@ class LibraryRepository(context: Context) {
             ?: "application/octet-stream"
         val format = BookFormat.from(displayName, mimeType)
             ?: error("Choose an EPUB or PDF file.")
+        val existing = database.books().find(uri.toString())
 
         database.books().upsert(
             BookEntity(
@@ -64,7 +72,14 @@ class LibraryRepository(context: Context) {
                 mimeType = format.mimeType,
                 sizeBytes = document.length().coerceAtLeast(0L),
                 lastModified = document.lastModified().coerceAtLeast(0L),
-                addedAt = System.currentTimeMillis(),
+                lastOpenedAt = existing?.lastOpenedAt,
+                addedAt = existing?.addedAt?.takeIf { it > 0L } ?: System.currentTimeMillis(),
+                publicationTitle = existing?.publicationTitle,
+                author = existing?.author,
+                coverPath = existing?.coverPath,
+                progressPercent = existing?.progressPercent ?: 0.0,
+                metadataLoaded = existing?.metadataLoaded ?: false,
+                lastLocatorJson = existing?.lastLocatorJson,
             ),
         )
     }
@@ -87,6 +102,7 @@ class LibraryRepository(context: Context) {
                     coverPath = previousBook?.coverPath,
                     progressPercent = previousBook?.progressPercent ?: 0.0,
                     metadataLoaded = previousBook?.metadataLoaded ?: false,
+                    lastLocatorJson = previousBook?.lastLocatorJson,
                 )
             }
             database.withTransaction {
@@ -109,6 +125,7 @@ class LibraryRepository(context: Context) {
 
     suspend fun removeFolder(uriString: String) {
         database.withTransaction {
+            database.readingStops().deleteForFolder(uriString)
             database.books().deleteForFolder(uriString)
             database.folders().delete(uriString)
         }
@@ -117,6 +134,7 @@ class LibraryRepository(context: Context) {
 
     suspend fun removeBook(uriString: String) {
         val book = database.books().find(uriString)
+        database.readingStops().deleteForBook(uriString)
         database.books().delete(uriString)
         if (book?.folderUri == null) releaseReadPermission(Uri.parse(uriString))
     }
@@ -146,6 +164,41 @@ class LibraryRepository(context: Context) {
     suspend fun updateReadingProgress(uriString: String, progress: Double) {
         database.books().updateProgress(uriString, progress.coerceIn(0.0, 1.0) * 100.0)
     }
+
+    suspend fun updateReadingPosition(uriString: String, locator: Locator) {
+        val json = locator.toJSON().toString()
+        val existingProgress = database.books().find(uriString)?.progressPercent?.div(100.0) ?: 0.0
+        val progressPercent = (locator.locations.totalProgression ?: existingProgress)
+            .coerceIn(0.0, 1.0) * 100.0
+        database.books().updateReadingPosition(uriString, progressPercent, json)
+    }
+
+    suspend fun lastReadingPosition(uriString: String): Locator? =
+        database.books().find(uriString)?.lastLocatorJson?.let(::parseLocator)
+
+    suspend fun recentReadingStops(uriString: String): List<ReadingStop> =
+        database.readingStops().recentForBook(uriString).mapNotNull { stop ->
+            parseLocator(stop.locatorJson)?.let { ReadingStop(it, stop.createdAt) }
+        }
+
+    suspend fun recordReadingStop(uriString: String, locator: Locator) {
+        val json = locator.toJSON().toString()
+        updateReadingPosition(uriString, locator)
+        val newest = database.readingStops().recentForBook(uriString).firstOrNull()
+        if (newest?.locatorJson != json) {
+            database.readingStops().insert(
+                ReadingStopEntity(
+                    bookUri = uriString,
+                    locatorJson = json,
+                    createdAt = System.currentTimeMillis(),
+                ),
+            )
+            database.readingStops().trimForBook(uriString)
+        }
+    }
+
+    private fun parseLocator(json: String): Locator? =
+        runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
 
     suspend fun findBook(uriString: String): BookEntity? = database.books().find(uriString)
 

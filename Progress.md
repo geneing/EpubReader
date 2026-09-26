@@ -5,7 +5,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 ## Current status
 
 - **Stage:** Initial Android implementation.
-- **Active branch:** `main` (reader scroll/voice/double-tap/auto-follow checkpoint merged from `feature/reader-scroll-and-voices`).
+- **Active branch:** `main` (reader-position and scrolling bug-fix checkpoint merged from `bugfix/reader-playback-position`; device verification pending).
 - **Current milestone:** Polish the EPUB reading and narration experience: continuous vertical scrolling that fills the window, dynamic Pocket voice selection and text size, double-tap-to-read, narration auto-follow, and background notification controls.
 - **Device strategy:** Host AVD is the default for UI, SAF, lifecycle, and Android System TTS. Pixel 10 is reserved for real Pocket TTS/LiteRT inference and performance.
 
@@ -47,12 +47,13 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - [x] Brought the media notification/lock-screen controls closer to the in-app mini-player: the session now publishes the derived cover art (cached per book) and a monochrome book status icon, alongside the existing "title · author · N% read" text and previous/play/next/Stop controls. Added an adaptive launcher icon (open book with sound arcs, sage background, monochrome layer for themed icons). Device verification pending.
 - [x] Replaced Readium's TTS engine/player for Pocket narration with an app-owned loop: `PublicationSentenceIterator` reads sentences via Readium's content service, `PocketNarrationSession` renders ~12 s ahead into memory, inserts 0.4 s ± 0.2 s jittered inter-sentence silence, and plays on an `AudioTrack` with the current sentence derived from the playback head. Android System TTS still uses Readium's navigator behind a shared `NarrationController`. Build and unit tests pass; device verification pending.
 - [x] Updated the vendored Pocket TTS LiteRT runtime from upstream `0354739b` to `2dba838`: streaming now emits on the dec_tx hop, voice discovery is `VoiceCatalog` (replacing `installedVoiceNames`/hardcoded lists), bundled voices use flat `pt_voice_<name>.bin`, and extra voices live in an app-owned `voices/` directory that the app creates with `VoiceCatalog.ensureDir`. Repointed the app model/checksum manifests and `PocketTtsModelManager` (which now requires only graphs plus bundled voices). Build and unit tests pass.
+- [x] Disabled horizontal page-turn swipes in EPUB scroll mode, continued vertical scrolling into the next reading-order resource at chapter end, persisted/restored precise Readium locators and per-book stop history, and mapped recreated Pocket `AudioTrack` heads back onto the queued-speech timeline. Debug assembly, unit tests, and lint pass; device verification remains pending.
 
 ## Immediate next steps
 
 1. Repeat the library, appearance, EPUB, and PDF smoke tests on a stable API 36 AVD and test the window-inset matrix.
-2. Replace percentage-only restoration with persisted Readium locator JSON and validate process recreation.
-3. Verify System TTS interruption/cancellation, Bluetooth headset disconnect/reconnect, and audio-focus behavior on an API 36 AVD and representative Bluetooth devices.
+2. Verify persisted locator restoration and reading-stop history across process recreation.
+3. Verify System TTS interruption/cancellation, Bluetooth headset pause/resume and disconnect/reconnect, and audio-focus behavior on an API 36 AVD and representative Bluetooth devices.
 4. Audit PdfiumAndroid/JitPack licensing and native ABI/16 KB page-size support; validate more representative PDFs before claiming broader support.
 5. Confirm audible Pocket TTS narration from the EPUB on Pixel 10; test the sentence look-ahead buffer and jittered pauses, per-book voice selection, pause/stop/cancellation, seek/skip, the reader highlight tracking the playback head, offline behavior, first-audio latency, and memory use.
 
@@ -61,7 +62,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - Readium PDF extraction/TTS locator mapping must be proven with representative PDFs.
 - Readium 3.4.0 and Pocket TTS LiteRT commit `2dba83888706fb52339767670a36ef22348aecd4` are pinned. Pocket service startup and model installation are confirmed on Pixel 10, but audible end-to-end Pocket narration and performance/cancellation checks are still pending.
 - SAF folder accessibility depends on Android's picker and the document provider; the basic local-folder grant and scan flow worked on the API 37 AVD. Repeat on API 36 and document provider constraints.
-- Readium 3.3.0 opened the supplied EPUB fixtures directly through persisted `content://` URIs on the API 37 AVD. Percentage-based progress restores the PDF page position; serialized Readium locator persistence and reader process restoration remain unimplemented.
+- Readium 3.3.0 opened the supplied EPUB fixtures directly through persisted `content://` URIs on the API 37 AVD. The bug-fix checkpoint adds serialized Readium locator restoration and per-book reading-stop history; validate them on an API 36 AVD and after process recreation.
 - The supplied searchable PDF renders and resumes at the saved percentage with Readium's PDFium adapter. PDF TTS text extraction and synchronized highlighting remain unimplemented; scanned-PDF OCR is out of scope.
 - AGP 9.4 currently requires opting out of its new DSL to use Kotlin 2.4.20's external Android plugin. The opt-out is deprecated and must be revisited when AGP/Kotlin plugin compatibility improves.
 - The audio-focus/long-interruption refactor now builds and passes unit tests, debug assembly, and lint. Earlier Pixel logs showed both the service and Readium requesting audio focus; confirm on-device that the service now relies only on Readium's Media3 focus handling and does not compete with it.

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.ColumnInfo
+import androidx.room.ForeignKey
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.Query
@@ -39,6 +40,26 @@ data class BookEntity(
     val coverPath: String? = null,
     @ColumnInfo(defaultValue = "0") val progressPercent: Double = 0.0,
     @ColumnInfo(defaultValue = "0") val metadataLoaded: Boolean = false,
+    val lastLocatorJson: String? = null,
+)
+
+@Entity(
+    tableName = "reading_stops",
+    foreignKeys = [
+        ForeignKey(
+            entity = BookEntity::class,
+            parentColumns = ["uri"],
+            childColumns = ["bookUri"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [androidx.room.Index("bookUri")],
+)
+data class ReadingStopEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val bookUri: String,
+    val locatorJson: String,
+    val createdAt: Long,
 )
 
 @Dao
@@ -85,6 +106,9 @@ interface BookDao {
     @Query("UPDATE books SET progressPercent = :progressPercent WHERE uri = :uri")
     suspend fun updateProgress(uri: String, progressPercent: Double)
 
+    @Query("UPDATE books SET progressPercent = COALESCE(:progressPercent, progressPercent), lastLocatorJson = :locatorJson WHERE uri = :uri")
+    suspend fun updateReadingPosition(uri: String, progressPercent: Double?, locatorJson: String)
+
     @Query("DELETE FROM books WHERE folderUri = :folderUri")
     suspend fun deleteForFolder(folderUri: String)
 
@@ -92,14 +116,33 @@ interface BookDao {
     suspend fun delete(uri: String)
 }
 
+@Dao
+interface ReadingStopDao {
+    @Query("SELECT * FROM reading_stops WHERE bookUri = :bookUri ORDER BY createdAt DESC, id DESC LIMIT 50")
+    suspend fun recentForBook(bookUri: String): List<ReadingStopEntity>
+
+    @androidx.room.Insert
+    suspend fun insert(stop: ReadingStopEntity)
+
+    @Query("DELETE FROM reading_stops WHERE bookUri = :bookUri AND id NOT IN (SELECT id FROM reading_stops WHERE bookUri = :bookUri ORDER BY createdAt DESC, id DESC LIMIT 50)")
+    suspend fun trimForBook(bookUri: String)
+
+    @Query("DELETE FROM reading_stops WHERE bookUri = :bookUri")
+    suspend fun deleteForBook(bookUri: String)
+
+    @Query("DELETE FROM reading_stops WHERE bookUri IN (SELECT uri FROM books WHERE folderUri = :folderUri)")
+    suspend fun deleteForFolder(folderUri: String)
+}
+
 @Database(
-    entities = [BookFolderEntity::class, BookEntity::class],
-    version = 4,
+    entities = [BookFolderEntity::class, BookEntity::class, ReadingStopEntity::class],
+    version = 5,
     exportSchema = true,
 )
 abstract class LibraryDatabase : RoomDatabase() {
     abstract fun folders(): BookFolderDao
     abstract fun books(): BookDao
+    abstract fun readingStops(): ReadingStopDao
 
     companion object {
         @Volatile
@@ -128,12 +171,22 @@ abstract class LibraryDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN lastLocatorJson TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS reading_stops (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, bookUri TEXT NOT NULL, locatorJson TEXT NOT NULL, createdAt INTEGER NOT NULL, FOREIGN KEY(bookUri) REFERENCES books(uri) ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_reading_stops_bookUri ON reading_stops(bookUri)")
+            }
+        }
+
         fun get(context: Context): LibraryDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 LibraryDatabase::class.java,
                 "epubreader-library.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
         }
     }
 }

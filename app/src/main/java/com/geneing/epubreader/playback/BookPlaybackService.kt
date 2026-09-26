@@ -39,7 +39,9 @@ import com.geneing.epubreader.data.LibraryRepository
 import com.geneing.epubreader.reader.ReadiumPublicationLoader
 import com.geneing.epubreader.reader.ReaderActivity
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
@@ -53,6 +55,7 @@ import org.readium.navigator.media.tts.TtsNavigator
 import org.readium.navigator.media.tts.android.AndroidTtsPreferences
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
+import org.json.JSONObject
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.coverFitting
 import org.readium.r2.shared.util.getOrElse
@@ -322,7 +325,9 @@ class BookPlaybackService : MediaSessionService() {
                     publication = opened.publication,
                     title = actualTitle,
                     author = actualAuthor,
-                    initialLocator = initialLocator ?: opened.initialLocator,
+                    initialLocator = initialLocator
+                        ?: book?.lastLocatorJson?.let { runCatching { Locator.fromJSON(JSONObject(it)) }.getOrNull() }
+                        ?: opened.initialLocator,
                     mediaId = uriString,
                 )
                 ttsNavigator = navigator
@@ -481,7 +486,7 @@ class BookPlaybackService : MediaSessionService() {
                 val locator = location.utteranceLocator
                 val progress = locator.locations.totalProgression
                     ?: PlaybackStateStore.state.value.progress.toDouble()
-                repository.updateReadingProgress(uriString, progress)
+                repository.updateReadingPosition(uriString, locator)
                 PlaybackStateStore.update(
                     PlaybackStateStore.state.value.copy(
                         currentLocator = locator,
@@ -524,6 +529,7 @@ class BookPlaybackService : MediaSessionService() {
     }
 
     private fun pauseByUser() {
+        recordCurrentStop()
         explicitUserPause = true
         pausedForHeadsetDisconnect = false
         longInterruptionJob?.cancel()
@@ -541,6 +547,7 @@ class BookPlaybackService : MediaSessionService() {
     private fun pauseForHeadsetDisconnect(isBluetooth: Boolean) {
         val navigator = ttsNavigator ?: return
         if (!navigator.playback.value.playWhenReady) return
+        recordCurrentStop()
         wasPlayingBeforeHeadsetDisconnect = true
         disconnectedOutputWasBluetooth = isBluetooth
         pausedForHeadsetDisconnect = true
@@ -550,6 +557,7 @@ class BookPlaybackService : MediaSessionService() {
     }
 
     private fun stopPlayback() {
+        recordCurrentStop()
         graceJob?.cancel()
         longInterruptionJob?.cancel()
         explicitUserPause = true
@@ -560,6 +568,14 @@ class BookPlaybackService : MediaSessionService() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         hasPlaybackNotification = false
         stopSelf()
+    }
+
+    private fun recordCurrentStop() {
+        val uri = activeBookUri ?: return
+        val locator = ttsNavigator?.location?.value?.utteranceLocator ?: return
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { repository.recordReadingStop(uri, locator) }
+        }
     }
 
     private fun closeActivePublication() {
@@ -640,6 +656,7 @@ class BookPlaybackService : MediaSessionService() {
                 ReaderActivity.EXTRA_PROGRESS_PERCENT,
                 (PlaybackStateStore.state.value.progress * 100.0).toDouble(),
             )
+            .putExtra(ReaderActivity.EXTRA_INITIAL_LOCATOR_JSON, PlaybackStateStore.state.value.currentLocator?.toJSON()?.toString())
         return PendingIntent.getActivity(
             this,
             uri.hashCode(),

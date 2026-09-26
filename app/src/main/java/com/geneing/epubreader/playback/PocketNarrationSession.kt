@@ -64,6 +64,7 @@ internal class PocketNarrationSession private constructor(
         val sentence: PublicationSentenceIterator.Sentence,
         val pcm: FloatArray,
         val pauseFrames: Int,
+        val startFrame: Long,
         val endFrame: Long,
     )
 
@@ -96,6 +97,9 @@ internal class PocketNarrationSession private constructor(
 
     @Volatile
     private var trackGeneration = -1L
+
+    @Volatile
+    private var trackFrameOffset = 0L
 
     private val mutablePlayback = MutableStateFlow(NarrationPlayback(playWhenReady = false))
     override val playback: StateFlow<NarrationPlayback> = mutablePlayback.asStateFlow()
@@ -278,7 +282,7 @@ internal class PocketNarrationSession private constructor(
                 val start = renderedFrames
                 val pause = pauseFrames()
                 val end = start + pcm.size + pause
-                segments.add(Segment(sentence, pcm, pause, end))
+                segments.add(Segment(sentence, pcm, pause, start, end))
                 renderedFrames = end
             }
         }
@@ -340,7 +344,7 @@ internal class PocketNarrationSession private constructor(
                 continue
             }
             if (generationChanged(seenGeneration)) continue
-            val track = ensureTrack()
+            val track = ensureTrack(segment.startFrame)
             if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
                 runCatching { track.play() }
             }
@@ -395,7 +399,7 @@ internal class PocketNarrationSession private constructor(
         return out
     }
 
-    private fun ensureTrack(): AudioTrack {
+    private fun ensureTrack(startFrame: Long): AudioTrack {
         audioTrack?.let { return it }
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -419,6 +423,7 @@ internal class PocketNarrationSession private constructor(
             .build()
         audioTrack = track
         trackGeneration = synchronized(lock) { generation }
+        trackFrameOffset = startFrame
         return track
     }
 
@@ -439,14 +444,18 @@ internal class PocketNarrationSession private constructor(
             val track = audioTrack
             val upToDate = trackGeneration == synchronized(lock) { generation }
             if (track != null && upToDate && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                val head = trackFrameOffset + (track.playbackHeadPosition.toLong() and 0xFFFFFFFFL)
                 var updated: PublicationSentenceIterator.Sentence? = null
                 var finished = false
                 synchronized(lock) {
-                    playedFrames = head
+                    // Some Bluetooth route changes recreate the platform track without
+                    // resetting our queued sentence timeline. Never move the speech
+                    // cursor backwards when the new track's hardware head starts at zero.
+                    val position = maxOf(playedFrames, head)
+                    playedFrames = position
                     var index = -1
                     for (i in segments.indices) {
-                        if (head < segments[i].endFrame) {
+                        if (position < segments[i].endFrame) {
                             index = i
                             break
                         }
