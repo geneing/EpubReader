@@ -38,7 +38,6 @@ import com.geneing.epubreader.data.BookFormat
 import com.geneing.epubreader.data.LibraryRepository
 import com.geneing.epubreader.reader.ReadiumPublicationLoader
 import com.geneing.epubreader.reader.ReaderActivity
-import dev.pockettts.PocketTts
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -51,17 +50,13 @@ import kotlinx.coroutines.Dispatchers
 import org.readium.navigator.media.common.DefaultMediaMetadataProvider
 import org.readium.navigator.media.tts.AndroidTtsNavigatorFactory
 import org.readium.navigator.media.tts.TtsNavigator
-import org.readium.navigator.media.tts.TtsNavigatorFactory
-import org.readium.navigator.media.tts.android.AndroidTtsEngine
 import org.readium.navigator.media.tts.android.AndroidTtsPreferences
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.coverFitting
 import org.readium.r2.shared.util.getOrElse
-import org.readium.r2.shared.util.Language
 import java.util.concurrent.TimeUnit
-import java.util.Locale
 import java.io.File
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -75,7 +70,7 @@ class BookPlaybackService : MediaSessionService() {
     private var placeholderPlayer: ExoPlayer? = null
     private var mediaSession: MediaSession? = null
     private var publication: Publication? = null
-    private var ttsNavigator: TtsNavigator<*, *, *, *>? = null
+    private var ttsNavigator: NarrationController? = null
     private var activeBookUri: String? = null
     private var foregroundBookTitle = ""
     private var graceJob: Job? = null
@@ -323,11 +318,12 @@ class BookPlaybackService : MediaSessionService() {
                 val actualAuthor = book?.author?.takeIf(String::isNotBlank)
                     ?: opened.publication.metadata.authors.firstOrNull { it.name.isNotBlank() }?.name
                 foregroundBookTitle = actualTitle
-                val navigator = createTtsNavigator(
+                val navigator = createNarration(
                     publication = opened.publication,
                     title = actualTitle,
                     author = actualAuthor,
                     initialLocator = initialLocator ?: opened.initialLocator,
+                    mediaId = uriString,
                 )
                 ttsNavigator = navigator
                 mediaSession?.setSessionActivity(createReaderPendingIntent(uriString, book?.displayName ?: displayName, book?.mimeType))
@@ -361,7 +357,7 @@ class BookPlaybackService : MediaSessionService() {
      * navigator's current text matches the text that was selected.
      */
     private suspend fun alignToSelectedText(
-        navigator: TtsNavigator<*, *, *, *>,
+        navigator: NarrationController,
         locator: Locator?,
     ) {
         val target = locator?.text?.highlight
@@ -390,61 +386,57 @@ class BookPlaybackService : MediaSessionService() {
         text.replace(WHITESPACE_REGEX, " ").trim()
 
 
-    private suspend fun createTtsNavigator(
+    private suspend fun createNarration(
         publication: Publication,
         title: String,
         author: String?,
         initialLocator: Locator?,
-    ): TtsNavigator<*, *, *, *> {
-        val metadataProvider = DefaultMediaMetadataProvider(title = title, author = author)
-        val listener = object : TtsNavigator.Listener {
-            override fun onStopRequested() {
-                stopPlayback()
-            }
-        }
-        val speechRate = AppPreferences.speechRate(applicationContext).toDouble()
+        mediaId: String,
+    ): NarrationController {
+        val speechRate = AppPreferences.speechRate(applicationContext)
 
         return when (AppPreferences.speechEngine(applicationContext)) {
             com.geneing.epubreader.data.SpeechEngine.ANDROID_SYSTEM -> {
+                val metadataProvider = DefaultMediaMetadataProvider(title = title, author = author)
+                val listener = object : TtsNavigator.Listener {
+                    override fun onStopRequested() {
+                        stopPlayback()
+                    }
+                }
                 val factory = AndroidTtsNavigatorFactory(
                     application,
                     publication,
                     metadataProvider = metadataProvider,
                 ) ?: error("This EPUB does not provide readable text for narration.")
-                factory.createNavigator(
+                val navigator = factory.createNavigator(
                     listener = listener,
                     initialLocator = initialLocator,
-                    initialPreferences = AndroidTtsPreferences(speed = speechRate),
+                    initialPreferences = AndroidTtsPreferences(speed = speechRate.toDouble()),
                 ).getOrElse { error -> error(error.message) }
+                ReadiumNarrationController(navigator)
             }
             com.geneing.epubreader.data.SpeechEngine.POCKET -> {
                 val modelStatus = withContext(Dispatchers.IO) { pocketTtsModelManager.status() }
                 check(modelStatus.installed) {
                     "Pocket TTS models are not installed (${modelStatus.missingFiles.size} files missing). Open Settings to install them."
                 }
-                val voice = AndroidTtsEngine.Voice.Id(
-                    PocketTts.voiceId(AppPreferences.pocketTtsVoice(applicationContext)),
-                )
-                val factory = TtsNavigatorFactory(
-                    application = application,
+                PocketNarrationSession.create(
+                    context = applicationContext,
                     publication = publication,
-                    ttsEngineProvider = PocketReadiumTtsEngineProvider(application),
-                    metadataProvider = metadataProvider,
-                ) ?: error("This EPUB does not provide readable text for narration.")
-                factory.createNavigator(
-                    listener = listener,
+                    title = title,
+                    author = author,
+                    voice = AppPreferences.pocketTtsVoice(applicationContext),
+                    rate = speechRate,
+                    pitch = 1f,
                     initialLocator = initialLocator,
-                    initialPreferences = AndroidTtsPreferences(
-                        speed = speechRate,
-                        voices = mapOf(Language(Locale.US) to voice),
-                    ),
-                ).getOrElse { error -> error(error.message) }
+                    mediaId = mediaId,
+                )
             }
         }
     }
 
     private fun observePlayback(
-        navigator: TtsNavigator<*, *, *, *>,
+        navigator: NarrationController,
         uriString: String,
         title: String,
         author: String?,
@@ -455,7 +447,7 @@ class BookPlaybackService : MediaSessionService() {
         lastPlayWhenReady = false
         playbackObserver = lifecycleScope.launch {
             navigator.playback.collect { playback ->
-                val isPlaying = playback.playWhenReady && playback.state !is org.readium.navigator.media.common.MediaNavigator.State.Ended
+                val isPlaying = playback.playWhenReady && !playback.ended && !playback.failed
                 val wasPlaying = lastPlayWhenReady
                 lastPlayWhenReady = playback.playWhenReady
                 val previous = PlaybackStateStore.state.value
@@ -475,9 +467,7 @@ class BookPlaybackService : MediaSessionService() {
                     explicitUserPause = false
                 } else {
                     scheduleMiniPlayerExpiry()
-                    if (playback.state is org.readium.navigator.media.common.MediaNavigator.State.Ended ||
-                        playback.state is org.readium.navigator.media.common.MediaNavigator.State.Failure
-                    ) {
+                    if (playback.ended || playback.failed) {
                         longInterruptionJob?.cancel()
                     } else if (wasPlaying && !explicitUserPause && !pausedForHeadsetDisconnect) {
                         scheduleLongInterruptionResume(navigator)
@@ -504,7 +494,7 @@ class BookPlaybackService : MediaSessionService() {
         }
     }
 
-    private fun scheduleLongInterruptionResume(navigator: TtsNavigator<*, *, *, *>) {
+    private fun scheduleLongInterruptionResume(navigator: NarrationController) {
         longInterruptionJob?.cancel()
         longInterruptionJob = lifecycleScope.launch {
             delay(LONG_INTERRUPTION_THRESHOLD_MS)
