@@ -8,8 +8,6 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
-import dev.pockettts.PocketTts
-import dev.pockettts.PocketTtsModels
 
 /**
  * The engine's settings screen, opened by the system TTS settings via the
@@ -27,8 +25,7 @@ class PocketTtsSettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val voices = PocketTtsModels.default(this).installedVoiceNames()
-            .ifEmpty { PocketTts.VOICES }
+        val voices = PocketTtsVoiceCatalog.installed(this).map { it.name }
         val pad = (resources.displayMetrics.density * 24).toInt()
 
         // Two nested rows: the outer one takes the action-bar inset, the inner

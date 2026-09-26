@@ -65,14 +65,11 @@ class PocketTtsConfig(
 
     companion object {
         /**
-         * Voices discovered in the model's [PocketTts.VOICES_DIR] directory (plus
-         * legacy root voice files), else the full bundled catalog before any
-         * voice file is installed.
+         * Every bundled voice whose state file is installed, plus any
+         * user-generated cache the models can see ([VoiceCatalog]). Falls back to
+         * [Voice.all] when nothing is installed.
          */
-        fun defaultVoices(models: PocketTtsModels): List<Voice> {
-            val installed = models.installedVoiceNames().map { Voice.forName(it) }
-            return installed.ifEmpty { Voice.all() }
-        }
+        fun defaultVoices(models: PocketTtsModels): List<Voice> = VoiceCatalog.installed(models)
 
         /**
          * The device policy: adb-pushed models first, GitHub release fallback,

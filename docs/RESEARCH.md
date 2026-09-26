@@ -37,7 +37,7 @@ Versions change frequently. These are dated observations and must be rechecked b
 | Compose | Stable Compose BOM 2026.09.00, required to use the current stable Compose libraries | [Compose release notes](https://developer.android.com/jetpack/androidx/releases/compose), [Compose BOM](https://developer.android.com/develop/ui/compose/bom/bom-mapping). Its resolved artifacts require compile SDK 37; min/target remain API 36. |
 | AndroidX Media3 | 1.11.1 stable, pinned for MediaSession/MediaSessionService and controller surfaces | [Media3 release notes](https://developer.android.com/jetpack/androidx/releases/media3), [MediaSessionService guide](https://developer.android.com/media/media3/session/background-playback). Session metadata and transport controls are the Android integration path for lock-screen, Bluetooth, and compatible automotive clients; verify actual device surfaces. |
 | Readium Kotlin Toolkit | 3.4.0, released 2026-09-11, is the latest stable release checked 2026-09-24 | [Readium releases](https://github.com/readium/kotlin-toolkit/releases), [3.4.0 docs](https://readium.org/kotlin-toolkit/3.4.0/). The docs state Readium is low-level; its TTS navigator supports any publication with a ContentService. |
-| Pocket TTS-LiteRT | Pinned to commit `0354739b7af355da804fd676b69ac03a67aa3178` (checked 2026-09-24); MIT-licensed source includes `pockettts-core` and `pockettts-service` | [Pinned source](https://github.com/geneing/PocketTTS-LiteRT/tree/0354739b7af355da804fd676b69ac03a67aa3178), [library guide](https://github.com/geneing/PocketTTS-LiteRT/blob/0354739b7af355da804fd676b69ac03a67aa3178/docs/library.md), [build notes](https://github.com/geneing/PocketTTS-LiteRT/blob/0354739b7af355da804fd676b69ac03a67aa3178/AGENTS.md). The pinned source snapshot is vendored under `third_party/` with provenance and license. |
+| Pocket TTS-LiteRT | Pinned to commit `2dba83888706fb52339767670a36ef22348aecd4` (checked 2026-09-25); MIT-licensed source includes `pockettts-core` and `pockettts-service` | [Pinned source](https://github.com/geneing/PocketTTS-LiteRT/tree/2dba83888706fb52339767670a36ef22348aecd4), [library guide](https://github.com/geneing/PocketTTS-LiteRT/blob/2dba83888706fb52339767670a36ef22348aecd4/docs/library.md), [build notes](https://github.com/geneing/PocketTTS-LiteRT/blob/2dba83888706fb52339767670a36ef22348aecd4/AGENTS.md). The pinned source snapshot is vendored under `third_party/` with provenance and license. |
 
 ### Important platform constraints
 
@@ -53,11 +53,12 @@ Versions change frequently. These are dated observations and must be rechecked b
 
 ## 3. Pocket TTS/LiteRT findings
 
-The pinned source snapshot (`0354739b7af355da804fd676b69ac03a67aa3178`) documents:
+The pinned source snapshot (`2dba83888706fb52339767670a36ef22348aecd4`) documents:
 
 - `pockettts-core`: LiteRT inference, model source/delivery, tokenizer/session and host-side orchestration.
 - `pockettts-service`: Android `TextToSpeechService`, which can register Pocket TTS as a system engine; it streams PCM and maps stop to request cancellation.
 - Preset voices in current docs: alba, marius, javert, charles, mary, eve. Current advertised voice service is English (`eng`); verify exact language/voice list in the pinned revision.
+- At the pinned revision, installed voices are discovered by `dev.pockettts.VoiceCatalog.installed(models)` rather than a hardcoded list. Bundled presets use flat `pt_voice_<name>.bin` files at the model-directory root; extra fetched/cloned caches live in an app-owned `voices/` subdirectory (`VoiceCatalog.ensureDir`), so `scripts/download_voices.py` and `create_voice.py` add presets/clones with no Android build change.
 - Models are intended to be obtained separately from the app, with variant releases and SHA-256 manifest support. Current library docs estimate roughly 81 MB base plus an ~86 MB int8 LM variant; the repository README also describes a total on-device asset footprint around 225 MB in one configuration. Treat disk/RAM requirements as device/configuration dependent and display accurate current estimates.
 - The repo describes model weights sourced from Kyutai. Its current README identifies upstream model weights as CC-BY-4.0 and voice assets as CC-BY-4.0/CC0, depending on voice. Retain notices and audit the precise selected artifact/voice terms before publishing.
 - Voice cloning is not provided by the ungated model package described in the repo and is out of scope.
