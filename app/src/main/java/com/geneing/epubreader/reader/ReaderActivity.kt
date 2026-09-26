@@ -251,6 +251,7 @@ class ReaderActivity : FragmentActivity() {
                     onSearchResultSelected = ::goToLocator,
                     onTocRequested = { tocDialogOpen = true },
                     onTocItemSelected = ::goToLink,
+                    onSectionSelected = ::goToSection,
                     onReadingHistoryRequested = ::openReadingHistory,
                     onLastReadSelected = {
                         lastReadLocator?.let(::goToLocator)
@@ -829,6 +830,12 @@ class ReaderActivity : FragmentActivity() {
         tocDialogOpen = false
     }
 
+    /** Jumps to a reading-order section shown when the publication has no TOC. */
+    private fun goToSection(section: ReaderSection) {
+        tocDialogOpen = false
+        seekToProgress(section.progression)
+    }
+
     private fun searchPublication(query: String) {
         val openedPublication = publication ?: return
         if (query.isBlank()) return
@@ -903,7 +910,7 @@ class ReaderActivity : FragmentActivity() {
                 ?: if (readingOrder.size > 1) index.toFloat() / (readingOrder.size - 1) else 0f
             val title = titlesByHref[href]
                 ?: link.title?.takeIf(String::isNotBlank)
-                ?: "Chapter ${index + 1}"
+                ?: "Section ${index + 1}"
             ReaderSection(title = title, progression = progression.coerceIn(0f, 1f))
         }.sortedBy { it.progression }
     }
@@ -1164,6 +1171,7 @@ private fun ReaderScreen(
     onSearchResultSelected: (Locator) -> Unit,
     onTocRequested: () -> Unit,
     onTocItemSelected: (Link) -> Unit,
+    onSectionSelected: (ReaderSection) -> Unit,
     onReadingHistoryRequested: () -> Unit,
     onLastReadSelected: () -> Unit,
     onReadingStopSelected: (Locator) -> Unit,
@@ -1181,6 +1189,10 @@ private fun ReaderScreen(
     var fastScrollActive by remember { mutableStateOf(false) }
     val pageUnit = if (format == BookFormat.PDF) "page" else "location"
     val isPdf = format == BookFormat.PDF
+    val hasChapters = tableOfContents.isNotEmpty() || readerSections.isNotEmpty()
+    // Publications without a nav document still expose chapters as reading-order
+    // resources, so fall back to those for the chapter list.
+    val useSectionFallback = tableOfContents.isEmpty() && readerSections.isNotEmpty()
 
     // The vertical scrollbar fades in while the user scrolls and out when idle.
     LaunchedEffect(currentProgress) {
@@ -1199,7 +1211,7 @@ private fun ReaderScreen(
                 },
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 actions = {
-                    IconButton(onClick = onTocRequested, enabled = tableOfContents.isNotEmpty()) {
+                    IconButton(onClick = onTocRequested, enabled = hasChapters) {
                         Icon(Icons.Outlined.Book, contentDescription = "Table of contents")
                     }
                     IconButton(onClick = onSearchRequested) {
@@ -1341,7 +1353,7 @@ private fun ReaderScreen(
                 }
             }
 
-            if (navigatorReady && errorMessage == null && tableOfContents.isNotEmpty()) {
+            if (navigatorReady && errorMessage == null && hasChapters) {
                 SmallFloatingActionButton(
                     onClick = onTocRequested,
                     containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -1474,7 +1486,7 @@ private fun ReaderScreen(
     if (tocDialogOpen) {
         AlertDialog(
             onDismissRequest = onDismissToc,
-            title = { Text("Table of contents") },
+            title = { Text(if (useSectionFallback) "Chapters" else "Table of contents") },
             text = {
                 Column(
                     modifier = Modifier
@@ -1482,9 +1494,20 @@ private fun ReaderScreen(
                         .heightIn(max = 480.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    tableOfContents.forEach { link ->
-                        TextButton(onClick = { onTocItemSelected(link) }, modifier = Modifier.fillMaxWidth()) {
-                            Text(link.title ?: link.href.toString(), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (useSectionFallback) {
+                        readerSections.forEach { section ->
+                            TextButton(
+                                onClick = { onSectionSelected(section) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(section.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    } else {
+                        tableOfContents.forEach { link ->
+                            TextButton(onClick = { onTocItemSelected(link) }, modifier = Modifier.fillMaxWidth()) {
+                                Text(link.title ?: link.href.toString(), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                 }
