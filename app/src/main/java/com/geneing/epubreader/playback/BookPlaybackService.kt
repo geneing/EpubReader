@@ -52,6 +52,7 @@ import kotlinx.coroutines.Dispatchers
 import org.readium.navigator.media.common.DefaultMediaMetadataProvider
 import org.readium.navigator.media.tts.AndroidTtsNavigatorFactory
 import org.readium.navigator.media.tts.TtsNavigator
+import org.readium.navigator.media.tts.android.AndroidTtsEngineProvider
 import org.readium.navigator.media.tts.android.AndroidTtsPreferences
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
@@ -408,9 +409,13 @@ class BookPlaybackService : MediaSessionService() {
                         stopPlayback()
                     }
                 }
+                val engineProvider = NormalizingTtsEngineProvider(
+                    AndroidTtsEngineProvider(application),
+                )
                 val factory = AndroidTtsNavigatorFactory(
                     application,
                     publication,
+                    ttsEngineProvider = engineProvider,
                     metadataProvider = metadataProvider,
                 ) ?: error("This EPUB does not provide readable text for narration.")
                 val navigator = factory.createNavigator(

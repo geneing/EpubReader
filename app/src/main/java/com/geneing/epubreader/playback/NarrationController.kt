@@ -1,6 +1,7 @@
 package com.geneing.epubreader.playback
 
 import androidx.media3.common.Player
+import com.geneing.epubreader.playback.normalization.TextNormalizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -78,7 +79,9 @@ internal class ReadiumNarrationController(
         location: org.readium.navigator.media.tts.TtsNavigator.Location,
     ): NarrationLocation = NarrationLocation(
         href = location.href,
-        utterance = location.utterance,
+        // The engine speaks the normalized text and reports ranges against it,
+        // so the reader highlight must use the same string to stay aligned.
+        utterance = TextNormalizer.English.normalize(location.utterance),
         range = location.range,
         utteranceLocator = location.utteranceLocator,
     )

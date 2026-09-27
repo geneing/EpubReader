@@ -20,9 +20,9 @@ text, so normalization can never shift a resume position or highlight. This is
 why the layer is a plain `String -> String` pipeline rather than something
 entangled with Readium locators.
 
-Current integration: `PocketNarrationSession.renderSentence` (Pocket path).
-Android System TTS still runs through Readium's `TtsUtteranceIterator` and is
-not normalized yet; see [Provider seams](#provider-seams).
+Current integration: `PocketNarrationSession.renderSentence` (Pocket path) and
+`NormalizingTtsEngineProvider` (Android System TTS path); see
+[Provider seams](#provider-seams).
 
 ## Principles
 
@@ -196,10 +196,13 @@ Remaining work, roughly by value.
   before `session.stream(...)`. Done.
 - **Android System TTS (Readium-owned loop):** the tokenizer cannot rewrite
   text (it only returns `IntRange`s that `TextContentTokenizer` slices), so the
-  seam is a `TtsEngineProvider` decorator whose `TtsEngine.speak` normalizes the
-  utterance before delegating to `AndroidTtsEngine`. Note the range callback
-  then indexes the normalized string; normalize `location.utterance` in
-  `ReadiumNarrationController` as well so highlight offsets stay consistent.
+  seam is `NormalizingTtsEngineProvider` — a `TtsEngineProvider` decorator whose
+  `TtsEngine.speak` normalizes the utterance before delegating to
+  `AndroidTtsEngine`. `BookPlaybackService` builds it with
+  `ttsEngineProvider = NormalizingTtsEngineProvider(AndroidTtsEngineProvider(…))`.
+  The range callback indexes the normalized string, so `ReadiumNarrationController`
+  normalizes `location.utterance` the same way to keep highlight offsets
+  consistent.
 - **Future providers:** normalize in the single place each provider receives
   utterance text; never in a shared layer that also feeds locators.
 
@@ -216,6 +219,9 @@ Remaining work, roughly by value.
 - Contract tests: idempotence (`normalize(normalize(x))` does not double-expand),
   non-English pass-through, and "no character disappears silently" for known
   non-prose inputs.
+- The Android System TTS seam is covered by
+  `NormalizingTtsEngineProviderTest` with a fake engine: the utterance is
+  rewritten before delegation and every other operation passes through.
 - When a rule changes segmentation assumptions, add the sentence through the
   real `PublicationSentenceIterator` on a small fixture so the integration is
   covered, not just the string rule.
