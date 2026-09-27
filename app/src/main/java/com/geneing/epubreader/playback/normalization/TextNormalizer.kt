@@ -12,13 +12,14 @@ import org.readium.r2.shared.util.Language
  * not from the spoken string.
  *
  * Rule order is significant and is documented in `docs/TEXT_NORMALIZATION.md`:
- * non-prose spans are isolated first, text is cleaned up, structured numeric
+ * non-prose spans are isolated first, text is cleaned up, context-sensitive
+ * Roman numerals are claimed before abbreviation rewriting, structured numeric
  * forms are claimed before bare numerals, and late rules must not re-interpret
  * another rule's emitted spoken text as source input.
  *
  * ## Extending
- * Add a [TextNormalizationRule] and append it to [English] in the intended
- * order. Keep each rule pure, deterministic and independently unit-tested.
+ * Add a [TextNormalizationRule] to [English] at the intended position. Keep
+ * each rule pure, deterministic and independently unit-tested.
  */
 internal class TextNormalizer(private val rules: List<TextNormalizationRule>) {
 
@@ -41,17 +42,20 @@ internal class TextNormalizer(private val rules: List<TextNormalizationRule>) {
                     NonProseNormalizer(),
                     // 2. Clean up characters and whitespace the rest relies on.
                     HygieneNormalizer(),
+                    // 3. Claim contextual Roman numerals before abbreviations
+                    // rewrite labels such as "Vol." and before later word rules.
+                    RomanNumeralNormalizer(),
                 ),
-                // 3. Claim structured numeric forms before bare numerals.
+                // 4. Claim structured numeric forms before bare numerals.
                 DATE_TIME_AND_QUANTITY_RULES,
                 listOf(
                     FractionNormalizer(),
                     DigitGroupNormalizer(),
                     UnitAndSymbolNormalizer(),
-                    // 4. Whatever is left is a plain numeral.
+                    // 5. Whatever is left is a plain numeral.
                     NumberNormalizer(),
                     DottedNumberNormalizer(),
-                    // 5. Symbol words and word-level rewrites last.
+                    // 6. Symbol words and word-level rewrites last.
                     AbbreviationNormalizer(),
                     SymbolNormalizer(),
                     LexiconNormalizer(),

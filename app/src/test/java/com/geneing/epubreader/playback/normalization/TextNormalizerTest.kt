@@ -17,6 +17,16 @@ class TextNormalizerTest {
     }
 
     @Test
+    fun romanNumeralsUseTitleAndRegnalContextThroughTheFullPipeline() {
+        assertEquals(
+            "Chapter four, then Henry the Eighth.",
+            normalizer.normalize("Chapter IV, then Henry VIII."),
+        )
+        assertEquals("Vol. four", normalizer.normalize("Vol. IV"))
+        assertEquals("Vitamin C is essential.", normalizer.normalize("Vitamin C is essential."))
+    }
+
+    @Test
     fun sentenceWithManyShapesIsNormalized() {
         assertEquals(
             "On January thirteenth two thousand seven, Mister Smith paid " +

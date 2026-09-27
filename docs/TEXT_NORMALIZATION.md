@@ -119,6 +119,37 @@ amounts, percentages, and measurements use cardinal quantity style. Thus
 "one thousand five hundred". Spelling follows CLDR `spellout-numbering` /
 `spellout-numbering-year` conventions (hyphenated tens, no "and").
 
+### Roman numerals
+
+Roman numerals are expanded only with an explicit context signal; isolated
+Roman-shaped words and initialisms are too ambiguous to rewrite safely. A
+case-insensitive title label immediately before the numeral is sufficient;
+the labels are `Chapter`, `Book`, `Part`, `Volume`, `Vol`/`Vol.`, `Section`,
+`Act`, `Scene`, `Article`, `Appendix`, `Psalm`, `Canto`, and `Lesson`.
+(`Chapter IV` → "Chapter four", `Vol. XII` → "Vol. twelve"). For regnal
+readings, the immediately preceding capitalized word must exactly match this
+allowlist of established regnal names: `Henry`, `Elizabeth`, `Louis`, `George`,
+`Edward`, `Charles`, `Richard`, `James`, `William`, `John`, `Philip`, `Peter`,
+`Alexander`, `Frederick`, `Alfonso`, `Ferdinand`, `Francis`, `Nicholas`, `Paul`,
+`Leo`, `Benedict`, `Gregory`, `Innocent`, `Pius`, `Sixtus`, `Urban`, `Adrian`,
+`Clement`, `Victor`, `Stephen`, `Martin`, `Constantine`, `Augustus`, `Titus`,
+`Vespasian`, `Trajan`, `Hadrian`, `Antoninus`, `Marcus`, `Lucius`, or
+`Maximilian` (`Henry VIII` → "Henry the Eighth", `Louis XIV` → "Louis the
+Fourteenth"). The allowlist avoids treating ordinary capitalized nouns such as
+`Vitamin` as names (`Vitamin C` stays unchanged). Roman syntax must be canonical
+subtractive notation in the range I–MMMCMXCIX; malformed forms are left
+untouched. Numerals in titles use cardinals, while regnal names use ordinals
+prefixed by "the". Lowercase Roman letters are accepted in either context
+because EPUB text is inconsistently cased. Numerals attached to a following
+hyphenated word are not claimed.
+
+The rule runs after non-prose isolation and hygiene, but before structured
+number, abbreviation, symbol, and lexicon rules. This lets it see the original
+`Vol.` label and prevents a later word rule from reconsidering its spoken
+output. With no qualifying title or allowlisted name, examples such as `I think`,
+`a V-shaped valley`, `50 M`, `CD player`, `the MI5`, `V for Vendetta`, `XIV`,
+and standalone `L`, `D`, or `C` remain unchanged.
+
 ### Dates, times and quantities
 
 - **Month dates:** `Feb. 13, 2007`, `February 13th, 2007`, `Feb 2007`.
@@ -159,7 +190,6 @@ Remaining work, roughly by value.
 | Rule | Examples | Notes |
 | --- | --- | --- |
 | Scientific / large | `1.5e9`, `10^6` | "one point five times ten to the ninth". |
-| Roman numerals | `Chapter IV`, `Henry VIII` | Context-gated; risky in isolation. |
 | Measurements with word units | `5 kilometres`, `70 miles per hour` | Already spelled; expansion of symbols only. |
 
 ### Symbols and punctuation
