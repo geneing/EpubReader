@@ -11,14 +11,14 @@ import org.readium.r2.shared.util.Language
  * reader highlight are untouched. Locators are resolved from source positions,
  * not from the spoken string.
  *
- * Rules are ordered: abbreviations are expanded before number conversion so an
- * expansion such as "for example" can never be re-scanned as a number.
+ * Rule order is significant and is documented in `docs/TEXT_NORMALIZATION.md`:
+ * non-prose spans are isolated first, text is cleaned up, structured numeric
+ * forms are claimed before bare numerals, and symbols/lexicon run last so their
+ * output is not re-scanned.
  *
  * ## Extending
- * Add a [TextNormalizationRule] and append it to [English]. Keep each rule
- * pure, deterministic and independently unit-tested. The pipeline, the planned
- * rule catalogue and the design principles live in
- * `docs/TEXT_NORMALIZATION.md`.
+ * Add a [TextNormalizationRule] and append it to [English] in the intended
+ * order. Keep each rule pure, deterministic and independently unit-tested.
  */
 internal class TextNormalizer(private val rules: List<TextNormalizationRule>) {
 
@@ -36,9 +36,27 @@ internal class TextNormalizer(private val rules: List<TextNormalizationRule>) {
         /** English normalization, the only language the Pocket engine speaks. */
         val English: TextNormalizer = TextNormalizer(
             listOf(
-                AbbreviationNormalizer(),
-                NumberNormalizer(),
-            ),
+                listOf(
+                    // 1. Isolate spans that must never reach the prose rules.
+                    NonProseNormalizer(),
+                    // 2. Clean up characters and whitespace the rest relies on.
+                    HygieneNormalizer(),
+                ),
+                // 3. Claim structured numeric forms before bare numerals.
+                DATE_TIME_AND_QUANTITY_RULES,
+                listOf(
+                    FractionNormalizer(),
+                    DigitGroupNormalizer(),
+                    UnitAndSymbolNormalizer(),
+                    // 4. Whatever is left is a plain numeral.
+                    NumberNormalizer(),
+                    DottedNumberNormalizer(),
+                    // 5. Symbol words and word-level rewrites last.
+                    AbbreviationNormalizer(),
+                    SymbolNormalizer(),
+                    LexiconNormalizer(),
+                ),
+            ).flatten(),
         )
 
         /** No-op normalizer for content we do not yet support rewriting. */

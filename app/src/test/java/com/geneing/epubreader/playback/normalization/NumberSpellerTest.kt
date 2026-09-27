@@ -43,6 +43,23 @@ class NumberSpellerTest {
     }
 
     @Test
+    fun ordinalSpelling() {
+        assertEquals("twenty-first", NumberSpeller.ordinal(21))
+        assertEquals("fourth", NumberSpeller.ordinal(4))
+        assertEquals("twelfth", NumberSpeller.ordinal(12))
+        assertEquals("hundredth", NumberSpeller.ordinal(100))
+        assertEquals("one hundred first", NumberSpeller.ordinal(101))
+        assertEquals("thousandth", NumberSpeller.ordinal(1000))
+    }
+
+    @Test
+    fun decadeSpelling() {
+        assertEquals("nineteen nineties", NumberSpeller.decade(1990))
+        assertEquals("eighties", NumberSpeller.decade(80))
+        assertEquals("two thousands", NumberSpeller.decade(2000))
+    }
+
+    @Test
     fun decimalsReadDigitByDigitAfterPoint() {
         assertEquals("three point one four", NumberSpeller.decimal(3, "14"))
         assertEquals("zero point five", NumberSpeller.decimal(0, "5"))

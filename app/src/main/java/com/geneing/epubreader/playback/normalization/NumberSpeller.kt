@@ -6,8 +6,9 @@ package com.geneing.epubreader.playback.normalization
  * Cardinal output follows the CLDR `spellout-numbering` convention (no "and",
  * hyphenated tens, e.g. `1234` -> "one thousand two hundred thirty-four") and
  * years follow `spellout-numbering-year` (`1999` -> "nineteen ninety-nine",
- * `2005` -> "two thousand five", `2013` -> "twenty thirteen"). Floating point
- * is read digit by digit after "point" (`3.14` -> "three point one four").
+ * `2005` -> "two thousand five", `2013` -> "twenty thirteen"). Ordinals and
+ * decades build on the cardinal form. Floating point is read digit by digit
+ * after "point" (`3.14` -> "three point one four").
  *
  * Pure Kotlin and locale-independent so the rules are testable on the host
  * JVM and do not depend on `android.icu`.
@@ -30,6 +31,15 @@ internal object NumberSpeller {
     /** Scale words indexed by thousands group (10^0, 10^3, ... 10^18). */
     private val SCALES = listOf(
         "", "thousand", "million", "billion", "trillion", "quadrillion", "quintillion",
+    )
+
+    private val ORDINAL_IRREGULAR = mapOf(
+        "one" to "first", "two" to "second", "three" to "third", "four" to "fourth",
+        "five" to "fifth", "six" to "sixth", "seven" to "seventh", "eight" to "eighth",
+        "nine" to "ninth", "ten" to "tenth", "eleven" to "eleventh", "twelve" to "twelfth",
+        "hundred" to "hundredth", "thousand" to "thousandth", "million" to "millionth",
+        "billion" to "billionth", "trillion" to "trillionth", "quadrillion" to "quadrillionth",
+        "quintillion" to "quintillionth",
     )
 
     /** Spells any [value] the way it would be read as a quantity. */
@@ -78,6 +88,97 @@ internal object NumberSpeller {
         else -> cardinal(value.toLong())
     }
 
+    /** Spells a bare numeral (with optional comma grouping / decimal) as a quantity. */
+    fun quantity(raw: String): String {
+        var token = raw
+        var prefix = ""
+        if (token.startsWith("-")) {
+            prefix = "minus "
+            token = token.substring(1)
+        }
+        val dot = token.indexOf('.')
+        val integerText = (if (dot >= 0) token.substring(0, dot) else token).replace(",", "")
+        val integer = integerText.toLongOrNull() ?: return raw
+        val body = if (dot >= 0) decimal(integer, token.substring(dot + 1)) else cardinal(integer)
+        return prefix + body
+    }
+
+    /**
+     * Spells a bare numeral, reading a four-digit integer in the common year
+     * span as a year. Used by [NumberNormalizer]; quantity-style rules use
+     * [quantity] instead so `1500%` is not read as "fifteen hundred".
+     *
+     * [ordinal] forces the cardinal reading, for positions such as a day or a
+     * page where a four-digit value is never a year.
+     */
+    fun spellToken(raw: String, ordinal: Boolean = false): String {
+        var token = raw
+        var prefix = ""
+        if (token.startsWith("-")) {
+            prefix = "minus "
+            token = token.substring(1)
+        }
+        val dot = token.indexOf('.')
+        val integerText = (if (dot >= 0) token.substring(0, dot) else token).replace(",", "")
+
+        if (!ordinal && dot < 0 && ',' !in raw && integerText.length == 4) {
+            val year = integerText.toIntOrNull()
+            if (year != null && year in 1000..2099) {
+                return prefix + year(year)
+            }
+        }
+
+        val integer = integerText.toLongOrNull() ?: return raw
+        return if (dot < 0) {
+            prefix + cardinal(integer)
+        } else {
+            prefix + decimal(integer, token.substring(dot + 1))
+        }
+    }
+
+    /** Spells an ordinal, e.g. `21` -> "twenty-first". */
+    fun ordinal(value: Long): String {
+        if (value == 0L) return "zeroth"
+        if (value < 0) return "minus " + ordinal(-value)
+
+        val ordinalValue = value % 1_000_000_000_000_000_000L
+        if (value != 0L && ordinalValue == 0L) {
+            // A pure scale word ("one thousand" -> "thousandth").
+            val scale = value.toBigInteger().toString().length - 1
+            val scaleWord = SCALES[scale / 3]
+            return ORDINAL_IRREGULAR[scaleWord] ?: (scaleWord + "th")
+        }
+
+        val words = cardinal(value)
+        val lastSpace = words.lastIndexOf(' ')
+        val prefix = if (lastSpace >= 0) words.substring(0, lastSpace + 1) else ""
+        val tail = if (lastSpace >= 0) words.substring(lastSpace + 1) else words
+        val hyphen = tail.lastIndexOf('-')
+        val ordinalTail = if (hyphen >= 0) {
+            tail.substring(0, hyphen + 1) + ordinalWord(tail.substring(hyphen + 1))
+        } else {
+            ordinalWord(tail)
+        }
+        return prefix + ordinalTail
+    }
+
+    /**
+     * Spells a decade, e.g. `1990` -> "nineteen nineties", `80` -> "eighties".
+     * A hundred-year boundary reads as its own word ("two thousands").
+     */
+    fun decade(value: Int): String = when {
+        value % 100 == 0 && value in 1000..2099 -> cardinal(value.toLong()) + "s"
+        value in 1000..2099 -> {
+            val words = year(value)
+            val firstSpace = words.indexOf(' ')
+            val head = if (firstSpace < 0) "" else words.substring(0, firstSpace + 1)
+            head + pluralizeLast(words.substringAfter(' '))
+        }
+        value % 10 != 0 -> cardinal(value.toLong()) + "s"
+        value in 20..90 -> pluralizeLast(TENS[value / 10])
+        else -> cardinal(value.toLong()) + "s"
+    }
+
     /** Spells a decimal number, reading [fractionDigits] one digit at a time. */
     fun decimal(integerPart: Long, fractionDigits: String): String =
         "${cardinal(integerPart)} point ${digits(fractionDigits)}"
@@ -87,6 +188,25 @@ internal object NumberSpeller {
         digits.map { character ->
             if (character.isDigit()) ONES[character - '0'] else character.toString()
         }.joinToString(" ")
+
+    private fun ordinalWord(word: String): String =
+        if (word.endsWith("y")) {
+            word.dropLast(1) + "ieth"
+        } else {
+            ORDINAL_IRREGULAR[word] ?: (word + "th")
+        }
+
+    private fun pluralizeLast(words: String): String {
+        val lastSpace = words.lastIndexOf(' ')
+        return if (lastSpace < 0) {
+            pluralWord(words)
+        } else {
+            words.substring(0, lastSpace + 1) + pluralWord(words.substring(lastSpace + 1))
+        }
+    }
+
+    private fun pluralWord(word: String): String =
+        if (word.endsWith("y")) word.dropLast(1) + "ies" else word + "s"
 
     private fun under1000(value: Int): String = when {
         value < 10 -> ONES[value]
