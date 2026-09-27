@@ -15,8 +15,8 @@ internal class UnitAndSymbolNormalizer : TextNormalizationRule {
     /**
      * Unit symbols ordered longest-first so `km/h` wins over `km` and `min`
      * over `m`, matched directly after the numeral (spacing optional). The
-     * symbol is captured with its original leading whitespace, which keeps the
-     * joined result spaced.
+     * optional whitespace is consumed with the match; the replacement inserts
+     * the separator between the spoken number and unit name.
      */
     private val measurement = Regex(
         "(?<![\\p{L}\\p{N}.])" +
@@ -46,17 +46,27 @@ internal class UnitAndSymbolNormalizer : TextNormalizationRule {
         }
         return measurement.replace(multiplied) { match ->
             val unit = UNITS.getValue(match.groupValues[2].lowercase())
-            "${match.groupValues[1]} $unit"
+            val symbol = match.groupValues[2].lowercase()
+            if (symbol == "in" && isFollowedByNumber(multiplied, match.range.last + 1)) {
+                match.value
+            } else {
+                "${NumberSpeller.quantity(match.groupValues[1])} $unit"
+            }
         }
+    }
+
+    /** `in` is the preposition, not inches, when another numeral follows it. */
+    private fun isFollowedByNumber(text: String, index: Int): Boolean {
+        val remainder = text.substring(index).dropWhile(Char::isWhitespace)
+        return remainder.firstOrNull()?.isDigit() == true
     }
 
     private companion object {
         /**
-         * Symbols that are unambiguous on their own, plus the short SI units
-         * that are only accepted when directly attached to the numeral
-         * (`5km`) or preceded by a degree/space in a measurement context.
-         * `in`, `m`, `l`, `g` and `h` are deliberately excluded from the
-         * standalone set: "5 in a row" and "1,234 in 1999" are prose.
+         * Symbols that are unambiguous on their own, plus common short units.
+         * Short units are accepted immediately after a numeral (with at most
+         * one space); for `in`, a following numeral disambiguates the prose
+         * preposition ("in 1999").
          */
         private val UNITS = mapOf(
             "km/h" to "kilometers per hour",
@@ -78,6 +88,11 @@ internal class UnitAndSymbolNormalizer : TextNormalizationRule {
             "°" to "degrees",
             "min" to "minutes",
             "sec" to "seconds",
+            "m" to "meters",
+            "in" to "inches",
+            "l" to "liters",
+            "g" to "grams",
+            "h" to "hours",
         )
     }
 }

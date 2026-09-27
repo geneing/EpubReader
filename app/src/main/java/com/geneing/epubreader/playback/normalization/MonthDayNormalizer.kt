@@ -22,7 +22,7 @@ internal class MonthDayNormalizer : TextNormalizationRule {
                 append(monthName(month))
                 if (day.isNotEmpty()) append(' ').append(NumberSpeller.ordinal(day.toLong()))
                 if (year.isNotEmpty()) {
-                    append(' ').append(NumberSpeller.spellToken(year, ordinal = true))
+                    append(' ').append(NumberSpeller.spellToken(year, NumberSpeller.Reading.YEAR))
                 }
             }
             spoken

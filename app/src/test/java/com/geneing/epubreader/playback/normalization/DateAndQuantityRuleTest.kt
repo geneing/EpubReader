@@ -16,7 +16,7 @@ class DateAndQuantityRuleTest {
 
     @Test
     fun monthNamesDatesReadAsOrdinals() {
-        // The day becomes an ordinal and the year is spelled as a quantity.
+        // The day becomes an ordinal and the year uses the year-style reading.
         assertEquals("February thirteenth two thousand seven", monthDay.apply("Feb. 13, 2007"))
         assertEquals("February thirteenth two thousand seven", monthDay.apply("February 13th, 2007"))
         assertEquals("January first", monthDay.apply("Jan. 1"))
@@ -31,6 +31,7 @@ class DateAndQuantityRuleTest {
         // `02/03` is day 2 of month 3 (day before month).
         assertEquals("March second, two thousand seven", numericDate.apply("02/03/2007"))
         assertEquals("March second, two thousand seven", numericDate.apply("2007-03-02"))
+        assertEquals("March second, nineteen ninety-nine", numericDate.apply("02/03/1999"))
         assertEquals("March second, two thousand seven", numericDate.apply("2/3/07"))
         // A month the year cannot have is left to the other rules.
         assertEquals("99/99/2007", numericDate.apply("99/99/2007"))

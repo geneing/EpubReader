@@ -27,12 +27,12 @@ class SymbolAndUnitTest {
 
     @Test
     fun unitsExpandAfterANumber() {
-        assertEquals("5 kilometers", normalizeSpacing(units.apply("5 km")))
-        assertEquals("6 feet.", normalizeSpacing(units.apply("6 ft.")))
-        assertEquals("70 miles per hour", normalizeSpacing(units.apply("70 mph")))
-        assertEquals("20 degrees Celsius", normalizeSpacing(units.apply("20 °C")))
-        assertEquals("10 kilograms", normalizeSpacing(units.apply("10 kg")))
-        assertEquals("25 degrees", normalizeSpacing(units.apply("25°")))
+        assertEquals("five kilometers", normalizeSpacing(units.apply("5 km")))
+        assertEquals("six feet.", normalizeSpacing(units.apply("6 ft.")))
+        assertEquals("seventy miles per hour", normalizeSpacing(units.apply("70 mph")))
+        assertEquals("twenty degrees Celsius", normalizeSpacing(units.apply("20 °C")))
+        assertEquals("ten kilograms", normalizeSpacing(units.apply("10 kg")))
+        assertEquals("twenty-five degrees", normalizeSpacing(units.apply("25°")))
         assertEquals("two times three", normalizeSpacing(units.apply("2 x 3")))
     }
 
@@ -40,6 +40,19 @@ class SymbolAndUnitTest {
     fun unitsAndNumbersCombineThroughThePipeline() {
         assertEquals("five kilometers", TextNormalizer.English.normalize("5 km"))
         assertEquals("six feet.", TextNormalizer.English.normalize("6 ft."))
+    }
+
+    @Test
+    fun shortUnitsRequireMeasurementContext() {
+        assertEquals("five meters", TextNormalizer.English.normalize("5 m"))
+        assertEquals("three inches.", TextNormalizer.English.normalize("3 in."))
+        assertEquals("two liters", TextNormalizer.English.normalize("2 l"))
+        assertEquals("four grams", TextNormalizer.English.normalize("4 g"))
+        assertEquals("six hours", TextNormalizer.English.normalize("6 h"))
+        assertEquals(
+            "one thousand two hundred thirty-four in nineteen ninety-nine",
+            TextNormalizer.English.normalize("1,234 in 1999"),
+        )
     }
 
     @Test

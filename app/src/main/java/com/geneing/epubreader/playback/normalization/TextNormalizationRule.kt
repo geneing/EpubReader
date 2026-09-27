@@ -6,8 +6,13 @@ package com.geneing.epubreader.playback.normalization
  *
  * Rules are intentionally small and pure (`String -> String`) so they can be
  * composed in a fixed order, unit-tested in isolation, and added one at a time
- * without touching the narration loop. A rule must preserve or shorten the
- * text; it should never introduce characters the engine cannot pronounce.
+ * without touching the narration loop. Rules may expand matched source spans,
+ * but should leave unrelated text alone and avoid characters the engine cannot
+ * pronounce. Output is considered final spoken text unless a named downstream
+ * rule is its designated consumer (as [DottedNumberNormalizer] is for the
+ * intermediate dotted groups from `DigitGroupNormalizer`). Other later rules
+ * must not reinterpret it as fresh source input. The combined pipeline is
+ * expected to be idempotent.
  *
  * See `docs/TEXT_NORMALIZATION.md` for the full pipeline and the catalogue of
  * planned rules.

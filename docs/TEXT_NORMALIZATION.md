@@ -36,8 +36,12 @@ not normalized yet; see [Provider seams](#provider-seams).
    corrupt source offsets.
 3. **Pure and ordered.** Each rule is a small, deterministic
    `TextNormalizationRule` (`String -> String`). Order is explicit and
-   significant: abbreviations are expanded before numbers so an expansion can
-   never be re-scanned as a numeral.
+   significant. A rule claims source-shaped input and emits final spoken words;
+   only a named downstream consumer may re-scan its intermediate output
+   (`DigitGroupNormalizer` hands dotted versions to `DottedNumberNormalizer`).
+   All other later rules must not treat emitted words as fresh source tokens or
+   expand them again. The combined contract is idempotence:
+   `normalize(normalize(text)) == normalize(text)`.
 4. **Language-gated.** `TextNormalizer.forLanguage` returns the English pipeline
    for `en*` and `null`, and a pass-through for other languages. Pocket TTS is
    English-only, but the gate keeps other providers safe and is where
@@ -97,9 +101,10 @@ Saint (`St. John`), while a preceding word ending the token means Street
   seventy-eight".
 - **Decimals:** `3.14` → "three point one four"; `2.50` → "two point five zero";
   `1,234.56` → "… point five six".
-- **Four-digit years:** `1999` → "nineteen ninety-nine"; `1905` → "nineteen oh
-  five"; `1900` → "nineteen hundred"; `1000` → "one thousand"; `2005` → "two
-  thousand five"; `2013` → "twenty thirteen".
+- **Four-digit years:** bare four-digit values in the common year range are
+  explicitly read with year style: `1999` → "nineteen ninety-nine";
+  `1905` → "nineteen oh five"; `1900` → "nineteen hundred"; `1000` → "one
+  thousand"; `2005` → "two thousand five"; `2013` → "twenty thirteen".
 - **Negatives:** `-42` → "minus forty-two"; a hyphen after a digit (`3-5`) is a
   range, not a sign.
 - **Digits and versions:** phone numbers (`415-555-1234`, `(415) 555-1234`,
@@ -107,8 +112,12 @@ Saint (`St. John`), while a preceding word ending the token means Street
   five five five one two three four"; dotted versions (`1.2.3`) and long digit
   runs read digit by digit.
 
-Spelling follows CLDR `spellout-numbering` / `spellout-numbering-year`
-conventions (hyphenated tens, no "and").
+The caller selects a `YEAR` or `QUANTITY` reading explicitly. Unmarked bare
+four-digit numerals and date/range years use year style; explicitly marked
+amounts, percentages, and measurements use cardinal quantity style. Thus
+`1999` → "nineteen ninety-nine", but `1500%`, `$1500`, and `1500 kg` use
+"one thousand five hundred". Spelling follows CLDR `spellout-numbering` /
+`spellout-numbering-year` conventions (hyphenated tens, no "and").
 
 ### Dates, times and quantities
 
@@ -119,19 +128,25 @@ conventions (hyphenated tens, no "and").
 - **Decades:** `1990s` → "nineteen nineties"; `'80s`/`80s` → "eighties".
 - **Currency:** `$5`, `£9`, `€20`, `$1500`, `$12.34` (→ "… and thirty-four
   cents"), `£3.50` (→ "… and fifty pence"), `5 dollars`.
-- **Percentages:** `50%`, `3.5 %`; `1500%` is read as a quantity, not a year.
+- **Percentages:** `50%`, `3.5 %`; `1500%` → "one thousand five hundred
+  percent" (quantity style, never year style).
 - **Ranges:** `3-5` → "three to five"; `1990-2000` → "nineteen ninety to two
   thousand".
 - **Times:** `9:30`, `09:05` (→ "nine oh five"), `9:30 p.m.`, `7:00 a.m.`.
 - **Fractions:** `3/4` → "three quarters"; `1/2` → "one half".
-- **Units:** `5 km`, `6 ft.`, `70 mph`, `20 °C`, `10 kg`, `25°`, `2 x 3`. Short
-  units that double as prose words (`in`, `m`, `l`, `g`, `h`) are excluded.
+- **Units:** `5 km`, `6 ft.`, `70 mph`, `20 °C`, `10 kg`, `25°`, `2 x 3`, plus
+  short units `5 m`, `3 in.`, `2 l`, `4 g`, and `6 h`. Short symbols are only
+  claimed immediately after a numeral (with at most one space); a following
+  numeral makes `in` the prose preposition, as in `1,234 in 1999`.
 
 ### Symbols, non-prose and lexicon
 
 - Symbols: `&` → "and", `+` → "plus", `=` → "equals", `©`/`®`/`™`, `%`, `°`.
 - Inline code, URLs and emails are spoken as letter sequences (`user@example.com`
-  → "u s e r at e x a m p l e dot c o m").
+  → "u s e r at e x a m p l e dot c o m"). The scanner runs first and claims
+  host-shaped spans such as `example.com/path` and `https://a.b`; numeric
+  lookalikes (`1,234.50`, `1.2.3`, `02/03/2007`) and abbreviations (`a.m.`)
+  remain available to their prose rules.
 - All-caps initialisms: known acronyms use a pronunciation (`NASA` → "Nasa");
   unlisted vowel-less caps are spelled out.
 
@@ -192,6 +207,9 @@ Remaining work, roughly by value.
 
 - Pure host JVM JUnit tests per rule and for the combined pipeline
   (`app/src/test/.../normalization/`); no Android/ICU dependency.
+- The pipeline's re-scanning invariant is covered by idempotence over a mixed
+  corpus and overlap checks for structured-number, abbreviation, symbol,
+  measurement, and non-prose rule pairs.
 - Table-driven cases for number spellout (cardinals, years, decimals,
   negatives) and abbreviations, including near-misses that must **not** change
   (`drum`, `MS`, `3D`, `1st`, `3-5`).

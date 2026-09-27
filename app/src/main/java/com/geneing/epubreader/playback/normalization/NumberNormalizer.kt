@@ -31,7 +31,7 @@ internal class NumberNormalizer : TextNormalizationRule {
         var token = raw
         val negative = token.startsWith('-')
         if (negative) token = token.substring(1)
-        val spelled = NumberSpeller.spellToken(token)
+        val spelled = NumberSpeller.spellToken(token, NumberSpeller.Reading.YEAR)
         return if (negative) "minus $spelled" else spelled
     }
 }

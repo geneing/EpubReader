@@ -19,6 +19,12 @@ package com.geneing.epubreader.playback.normalization
  */
 internal object NumberSpeller {
 
+    /** Whether a bare token is spoken as a year or as a cardinal quantity. */
+    enum class Reading {
+        YEAR,
+        QUANTITY,
+    }
+
     /** Largest value [ordinal] and the scale-word path support. */
     private const val MAX_ORDINAL = 999_999_999_999L
 
@@ -99,24 +105,21 @@ internal object NumberSpeller {
     fun quantity(raw: String): String {
         val text = if (raw.startsWith('-')) raw.substring(1) else raw
         val minus = if (raw.startsWith('-')) "minus " else ""
-        // A quantity is never read as a year.
-        return minus + spellToken(text, ordinal = true)
+        return minus + spellToken(text, Reading.QUANTITY)
     }
 
     /**
-     * Spells a bare numeral, reading a four-digit integer in the common year
-     * span as a year. Used by [NumberNormalizer]; quantity-style rules use
-     * [quantity] instead so `1500%` is not read as "fifteen hundred". A
-     * leading minus is not expected here ([NumberNormalizer] strips it).
-     *
-     * [ordinal] forces the cardinal reading, for positions such as a day or a
-     * page where a four-digit value is never a year.
+     * Spells a bare numeral according to [reading]. Callers must explicitly
+     * choose year style for unmarked prose/date years and quantity style for
+     * measurements, amounts, percentages, and other quantities. A leading
+     * minus is not expected here; [quantity] handles it and [NumberNormalizer]
+     * strips it before calling this method.
      */
-    fun spellToken(raw: String, ordinal: Boolean = false): String {
+    fun spellToken(raw: String, reading: Reading): String {
         val dot = raw.indexOf('.')
         val integerText = (if (dot >= 0) raw.substring(0, dot) else raw).replace(",", "")
 
-        if (!ordinal && dot < 0 && ',' !in raw && integerText.length == 4) {
+        if (reading == Reading.YEAR && dot < 0 && ',' !in raw && integerText.length == 4) {
             val year = integerText.toIntOrNull()
             if (year != null && year in 1000..2099) {
                 return year(year)

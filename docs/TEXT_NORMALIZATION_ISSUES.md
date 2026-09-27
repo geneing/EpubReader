@@ -1,45 +1,36 @@
-# Text normalization — hard issues for investigation
+# Text normalization — hard issues
 
-This file tracks the difficult, unresolved problems in the narration text
+This file records the hard issues investigated in the narration text
 normalization pipeline (`app/src/main/java/com/geneing/epubreader/playback/normalization`).
-Each item should be investigated and fixed with tests before the rule is
-considered done. Background and design principles live in
-`docs/TEXT_NORMALIZATION.md`.
+Background and design principles live in `docs/TEXT_NORMALIZATION.md`.
 
-## Open issues
+## Resolved issues (investigated with GPT-6 Luna)
 
-### 1. `1500%` reads as "fifteen hundred percent"
+### 1. Year versus quantity readings — resolved
 
-`PercentageNormalizer` currently delegates to `NumberSpeller.quantity`, which
-uses the cardinal reading, so `1500` becomes "fifteen hundred". The want is a
-reading decision shared with other quantity contexts: years (`1999` -> nineteen
-ninety-nine) versus quantities (`1500` -> one thousand five hundred). Audit
-every `spellToken`/`quantity` call site and make the year-vs-quantity policy
-explicit and tested, so `1500%`, `$1500`, `1500 kg` and `in 1500` each read
-correctly.
+`NumberSpeller.spellToken` now requires an explicit year/quantity reading.
+Unmarked four-digit numbers and date/range years use year style, while
+percentages, currency, symbols, and measurements use cardinal quantity style.
+Regression tests cover `1999`, `1500%`, `$1500`, and `1500 kg`.
 
-### 2. Unit symbol ambiguity
+### 2. Unit symbol ambiguity — resolved
 
-`m`, `in`, `l`, `g`, `h` were removed from `UnitAndSymbolNormalizer` because
-they collide with prose ("1,234 in 1999" -> "… inches …"). A context rule is
-needed so real measurements (`5 m`, `3 in.`) are still spoken while prose is
-untouched. Decide the acceptance criteria (attached numeral, explicit unit
-word, or a following unit-like token) and test both directions.
+The short units are restored only immediately after a numeral, with at most one
+space. A following numeral specifically disambiguates `in` as the preposition,
+so `1,234 in 1999` remains prose. Tests cover all five short units and both
+measurement/prose directions.
 
-### 3. Pipeline ordering and re-scanning
+### 3. Pipeline ordering and re-scanning — resolved
 
-The pipeline is an ordered list of `String -> String` rules. Later rules can
-re-scan output of earlier ones; `SymbolNormalizer` currently owns a
-numeral catch-all for this reason. Define the invariant precisely ("a rule may
-not match text that another rule just emitted unless it is the designated
-consumer") and add a test that walks a corpus and asserts idempotence
-(`normalize(normalize(x)) == normalize(x)`) plus no double expansion for every
-rule pair that overlaps.
+The invariant is documented: rules consume source-shaped tokens and emit final
+spoken words, except for an explicit intermediate handoff to a designated
+downstream consumer (`DigitGroupNormalizer` → `DottedNumberNormalizer`). Other
+later rules must not reinterpret emitted words as source tokens. The test suite
+checks idempotence across a mixed corpus and verifies overlapping later rule
+pairs do not re-expand output.
 
-### 4. URL/email vs numeric spans
+### 4. URL/email vs numeric spans — resolved
 
-`NonProseNormalizer` and the numeric rules both consume dotted/bracketed
-sequences. Ensure the URL/email scanner wins for real hosts (`example.com/path`,
-`user@example.com`, `https://a.b`) while `1,234.50`, `1.2.3`, `02/03/2007` and
-`a.m.` still reach their numeric/abbreviation rules. Add a table-driven
-regression set covering near-misses on both sides.
+The first-stage non-prose scanner claims real hosts, URLs, and email addresses;
+the table-driven regressions verify numeric/abbreviation near-misses continue
+to their prose rules instead.

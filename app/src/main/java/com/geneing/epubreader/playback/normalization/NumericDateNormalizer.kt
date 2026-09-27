@@ -16,14 +16,14 @@ internal class NumericDateNormalizer : TextNormalizationRule {
             val (year, month, day) = match.destructured
             if (!validDate(year, month, day)) return@replace match.value
             "${monthName(month)} ${NumberSpeller.ordinal(day.toLong())}, " +
-                NumberSpeller.spellToken(year)
+                NumberSpeller.spellToken(year, NumberSpeller.Reading.YEAR)
         }
         result = SLASHED_DATE.replace(result) { match ->
             val (day, month, year) = match.destructured
             if (!validDate(year, month, day)) return@replace match.value
             val expandedYear = if (year.length == 2) 2000 + year.toInt() else year.toInt()
             "${monthName(month)} ${NumberSpeller.ordinal(day.toLong())}, " +
-                NumberSpeller.cardinal(expandedYear.toLong())
+                NumberSpeller.year(expandedYear)
         }
         return result
     }

@@ -42,6 +42,19 @@ class NumberSpellerTest {
     }
 
     @Test
+    fun tokenReadingContextIsExplicit() {
+        assertEquals(
+            "nineteen ninety-nine",
+            NumberSpeller.spellToken("1999", NumberSpeller.Reading.YEAR),
+        )
+        assertEquals(
+            "one thousand five hundred",
+            NumberSpeller.spellToken("1500", NumberSpeller.Reading.QUANTITY),
+        )
+        assertEquals("one thousand five hundred", NumberSpeller.quantity("1500"))
+    }
+
+    @Test
     fun ordinalSpelling() {
         assertEquals("twenty-first", NumberSpeller.ordinal(21))
         assertEquals("fourth", NumberSpeller.ordinal(4))

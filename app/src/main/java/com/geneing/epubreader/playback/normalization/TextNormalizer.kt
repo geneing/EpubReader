@@ -13,8 +13,8 @@ import org.readium.r2.shared.util.Language
  *
  * Rule order is significant and is documented in `docs/TEXT_NORMALIZATION.md`:
  * non-prose spans are isolated first, text is cleaned up, structured numeric
- * forms are claimed before bare numerals, and symbols/lexicon run last so their
- * output is not re-scanned.
+ * forms are claimed before bare numerals, and late rules must not re-interpret
+ * another rule's emitted spoken text as source input.
  *
  * ## Extending
  * Add a [TextNormalizationRule] and append it to [English] in the intended

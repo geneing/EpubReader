@@ -24,8 +24,8 @@ internal class RangeNormalizer : TextNormalizationRule {
 
     override fun apply(text: String): String =
         punctuated.replace(text) { match ->
-            "${NumberSpeller.spellToken(match.groupValues[1])} to " +
-                NumberSpeller.spellToken(match.groupValues[2])
+            "${NumberSpeller.spellToken(match.groupValues[1], NumberSpeller.Reading.YEAR)} to " +
+                NumberSpeller.spellToken(match.groupValues[2], NumberSpeller.Reading.YEAR)
         }
 
     /** Whether [text] is entirely a numeral range this rule would spell. */

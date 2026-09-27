@@ -38,6 +38,15 @@ class TextNormalizerTest {
     }
 
     @Test
+    fun yearAndQuantityContextsStayDistinct() {
+        assertEquals("nineteen ninety-nine", normalizer.normalize("1999"))
+        assertEquals("one thousand five hundred percent", normalizer.normalize("1500%"))
+        assertEquals("one thousand five hundred dollars", normalizer.normalize("\$1500"))
+        assertEquals("one thousand five hundred kilograms", normalizer.normalize("1500 kg"))
+        assertEquals("in fifteen hundred", normalizer.normalize("in 1500"))
+    }
+
+    @Test
     fun urlsAndFractions() {
         assertEquals(
             "three quarters of one half",
@@ -51,8 +60,72 @@ class TextNormalizerTest {
 
     @Test
     fun normalizationIsIdempotent() {
-        val once = normalizer.normalize("Mr. Smith paid $1,234.56 on 02/03/2007 at 9:30 a.m.")
-        assertEquals(once, normalizer.normalize(once))
+        val corpus = listOf(
+            "Mr. Smith paid $1,234.56 on 02/03/2007 at 9:30 a.m.",
+            "1500% is 5 m and 3 in.",
+            "In 1999, the value was 1,234.50.",
+            "Visit example.com/path or user@example.com, then https://a.b.",
+            "Versions 1.2.3 and 415-555-1234 are listed.",
+            "3/4 of 1/2, 1990-2000, and 7:00 p.m.",
+            "Dr. Jones paid $1500 for 10 kg.",
+            "© 2007 Readium & friends.",
+        )
+        corpus.forEach { source ->
+            val once = normalizer.normalize(source)
+            assertEquals("Normalization was not idempotent for: $source", once, normalizer.normalize(once))
+        }
+    }
+
+    @Test
+    fun laterOverlappingRulesDoNotReExpandEarlierOutput() {
+        val number = NumberNormalizer()
+        val symbol = SymbolNormalizer()
+        val abbreviation = AbbreviationNormalizer()
+        val nonProse = NonProseNormalizer()
+        val percentage = PercentageNormalizer()
+        val currency = CurrencyNormalizer()
+        val units = UnitAndSymbolNormalizer()
+        val cases: List<Triple<TextNormalizationRule, TextNormalizationRule, String>> = listOf(
+            Triple(number, symbol, "1999"),
+            Triple(percentage, number, "1500%"),
+            Triple(currency, number, "\$1500"),
+            Triple(units, number, "1500 kg"),
+            Triple(abbreviation, symbol, "a.m."),
+            Triple(nonProse, number, "example.com/path"),
+        )
+        cases.forEach { (first, later, source) ->
+            val expanded = first.apply(source)
+            assertEquals("Later rule re-expanded output for: $source", expanded, later.apply(expanded))
+        }
+
+        // This is the one intentional intermediate handoff in the pipeline:
+        // dotted-number output is consumed once, then remains final speech.
+        val grouped = DigitGroupNormalizer().apply("1.2.3")
+        val spoken = DottedNumberNormalizer().apply(grouped)
+        assertEquals("one point two point three", spoken)
+        assertEquals(spoken, DottedNumberNormalizer().apply(spoken))
+    }
+
+    @Test
+    fun nonProseHostsWinWithoutCapturingNumericAndAbbreviationNearMisses() {
+        val nonProseCases = listOf(
+            "example.com/path" to "e x a m p l e dot c o m slash p a t h",
+            "user@example.com" to "u s e r at e x a m p l e dot c o m",
+            "https://a.b" to "h t t p s colon slash slash a dot b",
+        )
+        nonProseCases.forEach { (source, expected) ->
+            assertEquals(source, expected, NonProseNormalizer().apply(source))
+        }
+
+        val proseCases = listOf(
+            "1,234.50" to "one thousand two hundred thirty-four point five zero",
+            "1.2.3" to "one point two point three",
+            "02/03/2007" to "March second, two thousand seven",
+            "a.m." to "A M",
+        )
+        proseCases.forEach { (source, expected) ->
+            assertEquals(source, expected, normalizer.normalize(source))
+        }
     }
 
     @Test
