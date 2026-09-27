@@ -12,6 +12,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
+import com.geneing.epubreader.playback.normalization.TextNormalizer
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dev.pockettts.PocketTts
@@ -294,7 +295,10 @@ internal class PocketNarrationSession private constructor(
         try {
             session.rate = rate
             session.pitch = pitch
-            session.stream(sentence.text) { chunk ->
+            // Speak the normalized sentence; sentence.text and its locator stay
+            // untouched so the reader highlight and stored position are exact.
+            val spoken = TextNormalizer.forLanguage(sentence.language).normalize(sentence.text)
+            session.stream(spoken) { chunk ->
                 if (chunk.isNotEmpty()) parts.add(chunk)
             }
         } finally {

@@ -5,7 +5,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 ## Current status
 
 - **Stage:** Initial Android implementation.
-- **Active branch:** `main` (reader-position and scrolling bug-fix checkpoint merged from `bugfix/reader-playback-position`; device verification pending).
+- **Active branch:** `feature/tts-text-normalizer` (text normalization for Pocket narration; device verification pending).
 - **Current milestone:** Polish the EPUB reading and narration experience: continuous vertical scrolling that fills the window, dynamic Pocket voice selection and text size, double-tap-to-read, narration auto-follow, and background notification controls.
 - **Device strategy:** Host AVD is the default for UI, SAF, lifecycle, and Android System TTS. Pixel 10 is reserved for real Pocket TTS/LiteRT inference and performance.
 
@@ -49,6 +49,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - [x] Updated the vendored Pocket TTS LiteRT runtime from upstream `0354739b` to `2dba838`: streaming now emits on the dec_tx hop, voice discovery is `VoiceCatalog` (replacing `installedVoiceNames`/hardcoded lists), bundled voices use flat `pt_voice_<name>.bin`, and extra voices live in an app-owned `voices/` directory that the app creates with `VoiceCatalog.ensureDir`. Repointed the app model/checksum manifests and `PocketTtsModelManager` (which now requires only graphs plus bundled voices). Build and unit tests pass.
 - [x] Disabled horizontal page-turn swipes in EPUB scroll mode, continued vertical scrolling into the next reading-order resource at chapter end, persisted/restored precise Readium locators and per-book stop history, and mapped recreated Pocket `AudioTrack` heads back onto the queued-speech timeline. Debug assembly, unit tests, and lint pass; device verification remains pending.
 - [x] Added an index fast-scroller to the EPUB text view: the right-edge scrollbar is now a draggable thumb that seeks directly by progression (no velocity flinging) with a floating section bubble showing the current chapter title/percentage, plus a floating Chapters button that opens the table of contents. Publications without a nav document fall back to a reading-order chapter list ("Section N"). Verified on Pixel 10: dragging seeks (10%→54%, 22%→61%), the bubble shows the fallback title when the EPUB has no TOC and a real heading when it does, it hides on release, the Chapters button opens the TOC (selection navigates), and the Section list navigates (Section 5 → 20%, "CHAPTER XI ALL BY ELECTRICITY"). No crashes.
+- [x] Added an app-owned TTS text-normalization layer for Pocket narration (`playback/normalization`): an ordered, pure `TextNormalizationRule` pipeline, English-gated by `TextNormalizer.forLanguage`. Initial rules expand common abbreviations (honorifics/titles, Latin forms, months/days, organisations; context-aware `St.` → Saint/Street) and convert numerals to words (comma-grouped thousands, decimals, four-digit years, negatives). Normalization runs per sentence after segmentation, so locators and highlights still come from the source text. 19 host-JVM unit tests cover the speller, both rules, and the pipeline; the extensive roadmap is in `docs/TEXT_NORMALIZATION.md`. Android System TTS normalization remains future work.
 
 ## Immediate next steps
 

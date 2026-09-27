@@ -123,6 +123,13 @@ The actual contract should support the chosen Readium TTS API and Android `TextT
 
 If Pocket's Android system-service path proves unsuitable for in-process selection, use its direct core API behind `SpeechProvider`, but implement and test Readium utterance/location callbacks explicitly. Keep one of these paths as the source of truth; never synthesize the same utterance both through Readium and an independent player.
 
+### Text normalization
+
+- Speech engines mispronounce written forms (honorifics, numerals, symbols). Normalize each sentence between segmentation and synthesis, never before segmentation: the reader highlight and stored locator come from the source text, so the spoken string must not feed back into position logic.
+- The normalization layer is app-owned and provider-agnostic (`playback/normalization`): an ordered pipeline of pure `TextNormalizationRule`s, currently English-only, with `TextNormalizer.forLanguage` passing non-English content through unchanged.
+- Keep rules high-precision ("do no harm"): prefer leaving an ambiguous short form alone over a wrong expansion. Implemented now are common abbreviation expansion (honorifics/titles, Latin abbreviations, months/days, organisations) and Arabic-numeral conversion (comma-grouped thousands, decimals, four-digit years).
+- The full rule catalogue, principles, sources, and test strategy are in `docs/TEXT_NORMALIZATION.md`. Android System TTS is not yet normalized (Readium owns that loop); the planned seam is a `TtsEngineProvider` decorator that rewrites text in `TtsEngine.speak`.
+
 ### Readium utterances and synchronization
 
 - The Readium TTS navigator is the owner of publication sequence, utterance boundaries, and locator progression.

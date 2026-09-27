@@ -29,6 +29,7 @@ This is the long-term actionable backlog. `Progress.md` tracks the active milest
 - [ ] Harden Pocket model management (download/update/verify/delete, interrupted downloads, and recovery) beyond the initial cancellable download UI and debug ADB provisioning.
 - [ ] Complete accessibility, font scaling, traditional inset-safe UI, phone/tablet adaptive layouts, and Android 17 beta compatibility checks.
 - [ ] Add meaningful unit/instrumentation coverage for SAF grants, folder scans, locators, TTS state, media lifecycle, and model integrity.
+- [ ] Extend TTS text normalization beyond the initial abbreviation + number rules (`playback/normalization`, plan in `docs/TEXT_NORMALIZATION.md`): ordinals, percentages, currency, ranges/fractions, dates/times, units, symbols, and per-language rule sets, then wire the Android System TTS path through a normalizing `TtsEngineProvider` decorator.
 
 ## Post-MVP candidates
 

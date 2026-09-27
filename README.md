@@ -18,6 +18,7 @@ Development is centered on host AVDs using Android System TTS. A physical Pixel 
 - [Product design](docs/PRODUCT_DESIGN.md): feature set, user journeys, screens, and delivery scope.
 - [Technical design](docs/TECHNICAL_DESIGN.md): app architecture, reader/TTS integration, data model, and implementation sequence.
 - [Research notes](docs/RESEARCH.md): Evie feature research, technology versions, source links, and constraints.
+- [Text normalization for narration](docs/TEXT_NORMALIZATION.md): the spoken-text rewrite pipeline, implemented rules, and the normalization roadmap.
 - [Agent guidance](AGENTS.md): project conventions and build instructions for contributors and coding agents.
 - [TODO](TODO.md): long-term roadmap and actionable backlog.
 - [Progress](Progress.md): current milestone, completed checkpoints, and immediate next steps.
