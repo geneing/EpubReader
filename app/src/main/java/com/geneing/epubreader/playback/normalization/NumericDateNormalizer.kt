@@ -21,11 +21,9 @@ internal class NumericDateNormalizer : TextNormalizationRule {
         result = SLASHED_DATE.replace(result) { match ->
             val (day, month, year) = match.destructured
             if (!validDate(year, month, day)) return@replace match.value
-            val spokenYear = when {
-                year.length == 2 -> "20" + NumberSpeller.digits(year)
-                else -> NumberSpeller.spellToken(year)
-            }
-            "${monthName(month)} ${NumberSpeller.ordinal(day.toLong())}, $spokenYear"
+            val expandedYear = if (year.length == 2) 2000 + year.toInt() else year.toInt()
+            "${monthName(month)} ${NumberSpeller.ordinal(day.toLong())}, " +
+                NumberSpeller.cardinal(expandedYear.toLong())
         }
         return result
     }
@@ -38,7 +36,7 @@ internal class NumericDateNormalizer : TextNormalizationRule {
     }
 
     private fun monthName(number: String): String? =
-        MONTH_NAMES.getOrNull(number.toIntOrNull() ?: return null)
+        MONTH_NAMES.getOrNull((number.toIntOrNull() ?: return null) - 1)
 
     private companion object {
         private val MONTH_NAMES = listOf(

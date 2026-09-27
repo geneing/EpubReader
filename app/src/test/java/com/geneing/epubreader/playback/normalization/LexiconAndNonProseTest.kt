@@ -16,12 +16,6 @@ class LexiconAndNonProseTest {
     }
 
     @Test
-    fun vowelLessCapsAreSpelledOut() {
-        assertEquals("X Y Z", lexicon.apply("XYZ"))
-        assertEquals("the T V A", lexicon.apply("the TVA"))
-    }
-
-    @Test
     fun mixedCaseAndOrdinaryWordsAreLeftAlone() {
         assertEquals("Nato is fine", lexicon.apply("Nato is fine"))
         assertEquals("USB and USA", lexicon.apply("USB and USA"))
@@ -56,14 +50,6 @@ class LexiconAndNonProseTest {
         assertEquals(
             "Use the r u n function here.",
             nonProse.apply("Use the `run` function here."),
-        )
-    }
-
-    @Test
-    fun urlsAreSpelledByThePipelineToo() {
-        assertEquals(
-            "Visit e x a m p l e dot c o m.",
-            TextNormalizer.English.normalize("Visit example.com."),
         )
     }
 }

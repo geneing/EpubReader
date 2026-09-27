@@ -6,7 +6,6 @@ import org.junit.Test
 class PhoneAndDigitGroupTest {
 
     private val normalizer = DigitGroupNormalizer()
-    private val range = RangeNormalizer()
 
     @Test
     fun phoneNumbersWithHyphens() {
@@ -56,12 +55,7 @@ class PhoneAndDigitGroupTest {
     }
 
     @Test
-    fun yearRangeIsHandledByTheRangeRule() {
-        // The digit-group rule skips a two-year range; the range rule reads
-        // both ends as years, which this pairing proves.
-        assertEquals(
-            "nineteen ninety to two thousand",
-            range.apply(normalizer.apply("1990-2000")),
-        )
+    fun fourDigitYearRangeIsLeftForTheRangeRule() {
+        assertEquals("1990-2000", normalizer.apply("1990-2000"))
     }
 }

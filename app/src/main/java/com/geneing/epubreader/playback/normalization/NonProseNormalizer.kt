@@ -1,14 +1,14 @@
 package com.geneing.epubreader.playback.normalization
 
 /**
- * Splits a sentence into any non-prose spans it contains: inline code, URLs,
- * email addresses and mathematical expressions.
+ * Splits a sentence into any non-prose spans it contains: inline code, URLs and
+ * email addresses.
  *
  * These spans are spoken as sequences of letters and symbols rather than as
- * words, e.g. `user@example.com` becomes "u s e r at example dot com". The
+ * words, e.g. `user@example.com` becomes "u s e r at example dot c o m". The
  * scanner walks the text and only hands the prose between the spans to the rest
  * of the pipeline, so a version number inside a URL is never read as a
- * quantity.
+ * quantity. The remainder of the sentence is left for the other rules.
  */
 internal class NonProseNormalizer : TextNormalizationRule {
 
@@ -50,31 +50,37 @@ internal class NonProseNormalizer : TextNormalizationRule {
     }
 
     private fun spellSpan(span: String): String = buildString(span.length * 2) {
+        fun appendWord(word: String) {
+            if (isNotEmpty() && last() != ' ') append(' ')
+            append(word)
+        }
         for (character in span) {
             when {
-                character.isLetterOrDigit() -> {
-                    if (isNotEmpty()) append(' ')
+                character.isLetter() -> {
+                    if (isNotEmpty() && last() != ' ') append(' ')
                     append(character.lowercaseChar())
                 }
-                character == '@' -> append(" at ")
-                character == '.' -> append(" dot ")
-                character == '/' -> append(" slash ")
-                character == ':' -> append(" colon ")
-                character == '-' -> append(" dash ")
-                character == '_' -> append(" underscore ")
-                character == '&' -> append(" and ")
-                character == '=' -> append(" equals ")
-                character == '+' -> append(" plus ")
-                character == '#' -> append(" hash ")
-                character == '\\' -> append(" backslash ")
-                character == '^' -> append(" caret ")
-                character == '~' -> append(" tilde ")
-                character == '|' -> append(" pipe ")
-                character == '?' -> append(" question mark ")
-                character == '%' -> append(" percent ")
+                character.isDigit() -> {
+                    if (isNotEmpty() && last() != ' ') append(' ')
+                    append(character)
+                }
+                character == '@' -> appendWord("at")
+                character == '.' -> appendWord("dot")
+                character == '/' -> appendWord("slash")
+                character == ':' -> appendWord("colon")
+                character == '-' -> appendWord("dash")
+                character == '_' -> appendWord("underscore")
+                character == '&' -> appendWord("and")
+                character == '=' -> appendWord("equals")
+                character == '+' -> appendWord("plus")
+                character == '#' -> appendWord("hash")
+                character == '~' -> appendWord("tilde")
+                character == '|' -> appendWord("pipe")
+                character == '?' -> appendWord("question mark")
+                character == '`' -> Unit // Inline-code delimiter is silent.
                 character.isWhitespace() -> Unit
                 else -> {
-                    if (isNotEmpty()) append(' ')
+                    if (isNotEmpty() && last() != ' ') append(' ')
                     append(character)
                 }
             }
@@ -89,6 +95,17 @@ internal class NonProseNormalizer : TextNormalizationRule {
             Regex("https?://\\S+", RegexOption.IGNORE_CASE),
             Regex("www\\.\\S+", RegexOption.IGNORE_CASE),
             Regex("[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}"),
+            // A bare domain such as `example.com` or `example.com/path`. The
+            // name and each label must start with a letter and the TLD must be
+            // at least two letters, so `1,234.50` and `a.m` are never mistaken
+            // for hosts.
+            Regex(
+                "(?<![\\p{L}\\p{N}])" +
+                    "[A-Za-z][A-Za-z0-9\\-]*" +
+                    "(?:\\.[A-Za-z][A-Za-z0-9\\-]*)*" +
+                    "\\.[A-Za-z]{2,}" +
+                    "(?:/[\\w\\-./?#%&=+~]*)?",
+            ),
         )
     }
 }

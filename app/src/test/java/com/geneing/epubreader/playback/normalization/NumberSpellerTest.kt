@@ -24,7 +24,6 @@ class NumberSpellerTest {
             "one million two hundred thirty-four thousand five hundred sixty-seven",
             NumberSpeller.cardinal(1_234_567),
         )
-        assertEquals("minus forty-two", NumberSpeller.cardinal(-42))
     }
 
     @Test
@@ -47,9 +46,10 @@ class NumberSpellerTest {
         assertEquals("twenty-first", NumberSpeller.ordinal(21))
         assertEquals("fourth", NumberSpeller.ordinal(4))
         assertEquals("twelfth", NumberSpeller.ordinal(12))
-        assertEquals("hundredth", NumberSpeller.ordinal(100))
+        assertEquals("one hundredth", NumberSpeller.ordinal(100))
         assertEquals("one hundred first", NumberSpeller.ordinal(101))
-        assertEquals("thousandth", NumberSpeller.ordinal(1000))
+        assertEquals("one thousandth", NumberSpeller.ordinal(1000))
+        assertEquals("one millionth", NumberSpeller.ordinal(1_000_000))
     }
 
     @Test

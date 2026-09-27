@@ -15,8 +15,11 @@ internal class TimeNormalizer : TextNormalizationRule {
             val hour = match.groupValues[1].toInt()
             val minute = match.groupValues[2]
             val meridiem = match.groupValues[3]
-            val spokenMinute =
-                if (minute == "00") "o'clock" else NumberSpeller.cardinal(minute.toInt().toLong())
+            val spokenMinute = when {
+                minute == "00" -> "o'clock"
+                minute.startsWith("0") -> "oh ${NumberSpeller.cardinal(minute.drop(1).toInt().toLong())}"
+                else -> NumberSpeller.cardinal(minute.toInt().toLong())
+            }
             val suffix = when {
                 meridiem.startsWith("a", ignoreCase = true) -> " in the morning"
                 meridiem.startsWith("p", ignoreCase = true) -> " in the evening"

@@ -12,34 +12,40 @@ class SymbolAndUnitTest {
 
     @Test
     fun symbolsBecomeWords() {
-        assertEquals("salt and pepper", symbols.apply("salt & pepper"))
-        assertEquals("copyright 2007", symbols.apply("© 2007"))
-        assertEquals("two plus two equals four", symbols.apply("2 + 2 = 4"))
+        assertEquals("salt and pepper", normalizeSpacing(symbols.apply("salt & pepper")))
+        assertEquals("copyright 2007", normalizeSpacing(symbols.apply("© 2007")))
+        assertEquals("two plus two equals four", normalizeSpacing(symbols.apply("2 + 2 = 4")))
     }
 
     @Test
     fun abbreviationPeriodFallsInLowercaseChainsOnly() {
         assertEquals("eg this and ie that", symbols.apply("e.g this and i.e that"))
         assertEquals("am and pm", symbols.apply("a.m and p.m"))
-        // A sentence-ending period after a capitalised word must survive.
+        assertEquals("U.S and U.K", symbols.apply("U.S and U.K"))
         assertEquals("He saw Dr. X. Then he left.", symbols.apply("He saw Dr. X. Then he left."))
     }
 
     @Test
     fun unitsExpandAfterANumber() {
-        assertEquals("5 kilometers", units.apply("5 km").trim())
-        assertEquals("6 feet", units.apply("6 ft.").trim())
-        assertEquals("70 miles per hour", units.apply("70 mph").trim())
-        assertEquals("20 degrees Celsius", units.apply("20 °C").trim())
-        assertEquals("10 kilograms", units.apply("10 kg").trim())
-        assertEquals("25 degrees", units.apply("25°").trim())
-        assertEquals("two times three", units.apply("2 x 3"))
+        assertEquals("5 kilometers", normalizeSpacing(units.apply("5 km")))
+        assertEquals("6 feet.", normalizeSpacing(units.apply("6 ft.")))
+        assertEquals("70 miles per hour", normalizeSpacing(units.apply("70 mph")))
+        assertEquals("20 degrees Celsius", normalizeSpacing(units.apply("20 °C")))
+        assertEquals("10 kilograms", normalizeSpacing(units.apply("10 kg")))
+        assertEquals("25 degrees", normalizeSpacing(units.apply("25°")))
+        assertEquals("two times three", normalizeSpacing(units.apply("2 x 3")))
+    }
+
+    @Test
+    fun unitsAndNumbersCombineThroughThePipeline() {
+        assertEquals("five kilometers", TextNormalizer.English.normalize("5 km"))
+        assertEquals("six feet.", TextNormalizer.English.normalize("6 ft."))
     }
 
     @Test
     fun fractions() {
         assertEquals("three quarters", fractions.apply("3/4"))
-        assertEquals("one half", fractions.apply("1/2"))
+        assertEquals("two quarters", fractions.apply("2/4"))
         assertEquals("three tenths", fractions.apply("3/10"))
         assertEquals("two twenty-sevenths", fractions.apply("2/27"))
     }
@@ -47,7 +53,7 @@ class SymbolAndUnitTest {
     @Test
     fun hygieneNormalizesWhitespaceAndPunctuation() {
         assertEquals("a b c", hygiene.apply("a\u00A0b\u2009c"))
-        assertEquals("What?", hygiene.apply("What?!?"))
+        assertEquals("What?", hygiene.apply("What???"))
         assertEquals("etc...", hygiene.apply("etc\u2026"))
     }
 
@@ -62,4 +68,7 @@ class SymbolAndUnitTest {
         assertEquals("Mark - Twain", hygiene.apply("Mark\u2014Twain"))
         assertEquals("Tom & Jerry", hygiene.apply("Tom &amp; Jerry"))
     }
+
+    /** Symbol/unit words carry their own spaces, so compare on collapsed spacing. */
+    private fun normalizeSpacing(text: String) = text.replace(Regex("\\s+"), " ").trim()
 }

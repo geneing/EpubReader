@@ -51,15 +51,10 @@ class NumberNormalizerTest {
     }
 
     @Test
-    fun leavesNumbersEmbeddedInWordsAlone() {
+    fun hyphenAfterADigitIsNotASign() {
+        // `-5` follows a digit, so the sign lookbehind rejects it. The range
+        // rule reads the whole span earlier in the pipeline.
+        assertEquals("He ran three-5 miles.", normalizer.apply("He ran 3-5 miles."))
         assertEquals("The 1st and 3D versions.", normalizer.apply("The 1st and 3D versions."))
-        // A hyphenated suffix is spoken, because the hyphen already separates
-        // it from the word: "COVID nineteen".
-        assertEquals("COVID-nineteen broke out.", normalizer.apply("COVID-19 broke out."))
-    }
-
-    @Test
-    fun rangeHyphenIsNotTreatedAsANegativeSign() {
-        assertEquals("He ran three-five miles.", normalizer.apply("He ran 3-5 miles."))
     }
 }

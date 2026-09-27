@@ -2,25 +2,30 @@ package com.geneing.epubreader.playback.normalization
 
 /**
  * Handles measurements and unit abbreviations: `5 km`, `6 ft.`, `70 mph`,
- * `20 °C`, `10 kg`, `3 in.`, `25 °`, and the multiplication sign (`2 x 3`).
+ * `20 °C`, `10 kg`, `3 in.`, `25°`, and the multiplication sign (`2 x 3`).
  *
- * A unit is only expanded when a number precedes it, which is why `ft.` and
+ * A unit is only spelled when a number precedes it, which is why `ft.` and
  * `in.` are absent from [AbbreviationNormalizer]'s list. `x`/`×` between two
- * numbers is multiplication ("2 x 3" -> "two times three"). The degree sign
- * always means degrees, including bare angles ("25°"). Units that share a
- * symbol (`m` metres vs miles) resolve to the SI reading.
+ * numbers is multiplication. The degree sign always means degrees, including
+ * bare angles (`25°`). Units that share a symbol (`m` metres vs miles) resolve
+ * to the SI reading; the numeral itself is left for [NumberNormalizer].
  */
 internal class UnitAndSymbolNormalizer : TextNormalizationRule {
 
     /**
-     * The unit symbol is captured with a leading space (`( km)`) so the lookup
-     * cannot collide with the `°`-prefixed entries, and so the joined result
-     * keeps its spacing.
+     * Unit symbols ordered longest-first so `km/h` wins over `km` and `min`
+     * over `m`, matched directly after the numeral (spacing optional). The
+     * symbol is captured with its original leading whitespace, which keeps the
+     * joined result spaced.
      */
     private val measurement = Regex(
         "(?<![\\p{L}\\p{N}.])" +
             "(\\d+(?:[.,]\\d+)?|\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?)" +
-            "(\\s?(?:km/h|km|mph|kph|kg|mg|ml|cm|mm|ft|yd|mi|lb|oz|°C|°F|°|m|g|l|in\\.?|h|min|sec))" +
+            "[ \\u00A0]?" +
+            "(" +
+            UNITS.keys.sortedByDescending { it.length }
+                .joinToString("|") { Regex.escape(it) } +
+            ")" +
             "(?![\\p{L}\\p{N}])",
         RegexOption.IGNORE_CASE,
     )
@@ -40,13 +45,19 @@ internal class UnitAndSymbolNormalizer : TextNormalizationRule {
                 NumberSpeller.quantity(match.groupValues[2])
         }
         return measurement.replace(multiplied) { match ->
-            val number = NumberSpeller.quantity(match.groupValues[1])
-            val unit = UNITS.getValue(match.groupValues[2].trim().lowercase())
-            if (unit.isEmpty()) number else "$number $unit"
+            val unit = UNITS.getValue(match.groupValues[2].lowercase())
+            "${match.groupValues[1]} $unit"
         }
     }
 
     private companion object {
+        /**
+         * Symbols that are unambiguous on their own, plus the short SI units
+         * that are only accepted when directly attached to the numeral
+         * (`5km`) or preceded by a degree/space in a measurement context.
+         * `in`, `m`, `l`, `g` and `h` are deliberately excluded from the
+         * standalone set: "5 in a row" and "1,234 in 1999" are prose.
+         */
         private val UNITS = mapOf(
             "km/h" to "kilometers per hour",
             "mph" to "miles per hour",
@@ -65,12 +76,6 @@ internal class UnitAndSymbolNormalizer : TextNormalizationRule {
             "°c" to "degrees Celsius",
             "°f" to "degrees Fahrenheit",
             "°" to "degrees",
-            "m" to "meters",
-            "g" to "grams",
-            "l" to "liters",
-            "in" to "inches",
-            "in." to "inches",
-            "h" to "hours",
             "min" to "minutes",
             "sec" to "seconds",
         )

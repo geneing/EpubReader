@@ -17,12 +17,18 @@ internal class FractionNormalizer : TextNormalizationRule {
             "(?![\\p{L}\\p{N}/])",
     )
 
-    private val word = Regex(
+    /**
+     * Corrects the irregular denominators that a pluralized ordinal would
+     * otherwise spell wrong: "second" -> "half", "fourth" -> "quarter". The
+     * numerator is recognised as a standalone word so `three quarters` is
+     * rewritten without touching the surrounding words.
+     */
+    private val irregularDenominator = Regex(
         "(?<![\\p{L}'’])" +
-            "(one|two|three|five|eight|nine|twelve" +
-            "|fourth|sixth|seventh|tenth|eleventh" +
+            "(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve" +
             "|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)" +
-            "(third|fifth|second|fourth)s" +
+            "\\s+" +
+            "(second|fourth)s" +
             "(?![\\p{L}'’])",
         RegexOption.IGNORE_CASE,
     )
@@ -39,16 +45,15 @@ internal class FractionNormalizer : TextNormalizationRule {
                 "$numeratorWord $denominatorWord"
             }
         }
-        return word.replace(spelled) { match ->
+        return irregularDenominator.replace(spelled) { match ->
             val numerator = match.groupValues[1].lowercase()
+            val singular = numerator == "one"
             val denominator = when (match.groupValues[2].lowercase()) {
-                "third" -> "third"
-                "fifth" -> "fifth"
                 "second" -> "half"
-                "fourth" -> "quarter"
-                else -> match.groupValues[2]
+                else -> "quarter"
             }
-            "$numerator ${denominator}s"
+            val plural = if (singular) denominator else "${denominator}s"
+            "$numerator $plural"
         }
     }
 

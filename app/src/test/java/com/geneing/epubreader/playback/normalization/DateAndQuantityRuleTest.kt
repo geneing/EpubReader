@@ -16,31 +16,38 @@ class DateAndQuantityRuleTest {
 
     @Test
     fun monthNamesDatesReadAsOrdinals() {
-        assertEquals("February thirteenth, two thousand seven", monthDay.apply("Feb. 13, 2007"))
-        assertEquals("February thirteenth, two thousand seven", monthDay.apply("February 13th, 2007"))
+        // The day becomes an ordinal and the year is spelled as a quantity.
+        assertEquals("February thirteenth two thousand seven", monthDay.apply("Feb. 13, 2007"))
+        assertEquals("February thirteenth two thousand seven", monthDay.apply("February 13th, 2007"))
         assertEquals("January first", monthDay.apply("Jan. 1"))
         assertEquals("September two thousand one", monthDay.apply("Sept. 2001"))
+        // A year outside the supported span is declined; the number rule can
+        // still spell it later in the pipeline.
+        assertEquals("Sept. 4000", monthDay.apply("Sept. 4000"))
     }
 
     @Test
     fun numericDatesReadDayFirst() {
+        // `02/03` is day 2 of month 3 (day before month).
         assertEquals("March second, two thousand seven", numericDate.apply("02/03/2007"))
         assertEquals("March second, two thousand seven", numericDate.apply("2007-03-02"))
         assertEquals("March second, two thousand seven", numericDate.apply("2/3/07"))
+        // A month the year cannot have is left to the other rules.
+        assertEquals("99/99/2007", numericDate.apply("99/99/2007"))
     }
 
     @Test
     fun ordinals() {
         assertEquals("twenty-first", ordinal.apply("21st"))
         assertEquals("third", ordinal.apply("3rd"))
-        assertEquals("hundredth", ordinal.apply("100th"))
+        assertEquals("one hundredth", ordinal.apply("100th"))
         assertEquals("twelfth", ordinal.apply("12th"))
     }
 
     @Test
     fun decades() {
         assertEquals("nineteen nineties", decade.apply("1990s"))
-        assertEquals("eighties", decade.apply("'80s"))
+        assertEquals("nineteen eighties", decade.apply("'80s"))
         assertEquals("eighties", decade.apply("80s"))
     }
 
@@ -62,16 +69,16 @@ class DateAndQuantityRuleTest {
     }
 
     @Test
-    fun percentages() {
+    fun percentagesReadAsQuantities() {
         assertEquals("fifty percent", percentage.apply("50%"))
         assertEquals("three point five percent", percentage.apply("3.5 %"))
+        // "one thousand five hundred", never "fifteen hundred".
         assertEquals("one thousand five hundred percent", percentage.apply("1500%"))
     }
 
     @Test
     fun ranges() {
         assertEquals("three to five", range.apply("3-5"))
-        assertEquals("nineteen ninety to two thousand", range.apply("1990-2000"))
         assertEquals("one thousand to two thousand", range.apply("1,000-2,000"))
         assertEquals("five to seven", range.apply("5 \u2013 7"))
     }

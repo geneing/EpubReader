@@ -10,10 +10,17 @@ package com.geneing.epubreader.playback.normalization
  * decades build on the cardinal form. Floating point is read digit by digit
  * after "point" (`3.14` -> "three point one four").
  *
+ * The public functions expect normalized input: callers that may see ranges or
+ * negative values ([NumberNormalizer], [RangeNormalizer], [UnitAndSymbolNormalizer],
+ * [CurrencyNormalizer]) screen those forms or check for them first.
+ *
  * Pure Kotlin and locale-independent so the rules are testable on the host
  * JVM and do not depend on `android.icu`.
  */
 internal object NumberSpeller {
+
+    /** Largest value [ordinal] and the scale-word path support. */
+    private const val MAX_ORDINAL = 999_999_999_999L
 
     private val ONES = listOf(
         "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
@@ -45,7 +52,7 @@ internal object NumberSpeller {
     /** Spells any [value] the way it would be read as a quantity. */
     fun cardinal(value: Long): String {
         if (value == 0L) return ONES[0]
-        if (value < 0) return "minus " + cardinal(-value)
+        require(value > 0) { "cardinal() expects a non-negative value: $value" }
 
         val groups = ArrayList<Int>()
         var remaining = value
@@ -90,62 +97,55 @@ internal object NumberSpeller {
 
     /** Spells a bare numeral (with optional comma grouping / decimal) as a quantity. */
     fun quantity(raw: String): String {
-        var token = raw
-        var prefix = ""
-        if (token.startsWith("-")) {
-            prefix = "minus "
-            token = token.substring(1)
-        }
-        val dot = token.indexOf('.')
-        val integerText = (if (dot >= 0) token.substring(0, dot) else token).replace(",", "")
-        val integer = integerText.toLongOrNull() ?: return raw
-        val body = if (dot >= 0) decimal(integer, token.substring(dot + 1)) else cardinal(integer)
-        return prefix + body
+        val text = if (raw.startsWith('-')) raw.substring(1) else raw
+        val minus = if (raw.startsWith('-')) "minus " else ""
+        // A quantity is never read as a year.
+        return minus + spellToken(text, ordinal = true)
     }
 
     /**
      * Spells a bare numeral, reading a four-digit integer in the common year
      * span as a year. Used by [NumberNormalizer]; quantity-style rules use
-     * [quantity] instead so `1500%` is not read as "fifteen hundred".
+     * [quantity] instead so `1500%` is not read as "fifteen hundred". A
+     * leading minus is not expected here ([NumberNormalizer] strips it).
      *
      * [ordinal] forces the cardinal reading, for positions such as a day or a
      * page where a four-digit value is never a year.
      */
     fun spellToken(raw: String, ordinal: Boolean = false): String {
-        var token = raw
-        var prefix = ""
-        if (token.startsWith("-")) {
-            prefix = "minus "
-            token = token.substring(1)
-        }
-        val dot = token.indexOf('.')
-        val integerText = (if (dot >= 0) token.substring(0, dot) else token).replace(",", "")
+        val dot = raw.indexOf('.')
+        val integerText = (if (dot >= 0) raw.substring(0, dot) else raw).replace(",", "")
 
         if (!ordinal && dot < 0 && ',' !in raw && integerText.length == 4) {
             val year = integerText.toIntOrNull()
             if (year != null && year in 1000..2099) {
-                return prefix + year(year)
+                return year(year)
             }
         }
 
         val integer = integerText.toLongOrNull() ?: return raw
         return if (dot < 0) {
-            prefix + cardinal(integer)
+            cardinal(integer)
         } else {
-            prefix + decimal(integer, token.substring(dot + 1))
+            decimal(integer, raw.substring(dot + 1))
         }
     }
 
-    /** Spells an ordinal, e.g. `21` -> "twenty-first". */
+    /**
+     * Spells an ordinal, e.g. `21` -> "twenty-first". Numbers after the
+     * millions are not supported (the result would name no real position).
+     */
     fun ordinal(value: Long): String {
         if (value == 0L) return "zeroth"
         if (value < 0) return "minus " + ordinal(-value)
+        if (value > MAX_ORDINAL) return cardinal(value) + "th"
 
         val ordinalValue = value % 1_000_000_000_000_000_000L
-        if (value != 0L && ordinalValue == 0L) {
-            // A pure scale word ("one thousand" -> "thousandth").
-            val scale = value.toBigInteger().toString().length - 1
-            val scaleWord = SCALES[scale / 3]
+        if (ordinalValue == 0L && value <= MAX_ORDINAL) {
+            // A pure scale word, e.g. 1,000,000 -> "millionth". Values past the
+            // quintillions are unsupported by the scale table.
+            val power = value.toString().length - 1
+            val scaleWord = SCALES.getOrNull(power / 3) ?: return cardinal(value) + "th"
             return ORDINAL_IRREGULAR[scaleWord] ?: (scaleWord + "th")
         }
 

@@ -61,6 +61,13 @@ To add a rule: implement `TextNormalizationRule`, append it to
 
 ## Implemented now
 
+### Hygiene
+
+Decodes HTML entities, normalizes Unicode whitespace and zero-width/control
+characters, converts smart quotes/dashes/ellipsis to ASCII, repairs line-break
+hyphenation, and collapses repeated sentence punctuation. Runs first so the
+numeric and symbol rules see clean ASCII.
+
 ### Abbreviations
 
 Word-boundary, case-insensitive expansion of a curated, near-unambiguous list
@@ -85,8 +92,6 @@ Saint (`St. John`), while a preceding word ending the token means Street
 
 ### Numbers
 
-`NumberNormalizer` converts, with word boundaries on both sides:
-
 - **Comma-grouped thousands:** `1,234` → "one thousand two hundred thirty-four";
   `12,345,678` → "twelve million three hundred forty-five thousand six hundred
   seventy-eight".
@@ -95,56 +100,62 @@ Saint (`St. John`), while a preceding word ending the token means Street
 - **Four-digit years:** `1999` → "nineteen ninety-nine"; `1905` → "nineteen oh
   five"; `1900` → "nineteen hundred"; `1000` → "one thousand"; `2005` → "two
   thousand five"; `2013` → "twenty thirteen".
-- **Negatives:** `-42` → "minus forty-two".
-
-Deliberately not treated as negatives/ranges: a hyphen that follows a digit
-(`3-5` → "three-five"). Numbers attached to letters on both sides (`3D`, `1st`)
-are left alone.
+- **Negatives:** `-42` → "minus forty-two"; a hyphen after a digit (`3-5`) is a
+  range, not a sign.
+- **Digits and versions:** phone numbers (`415-555-1234`, `(415) 555-1234`,
+  `415.555.1234`, `415 555 1234`, `… ext. 12`) read as "area code four one five
+  five five five one two three four"; dotted versions (`1.2.3`) and long digit
+  runs read digit by digit.
 
 Spelling follows CLDR `spellout-numbering` / `spellout-numbering-year`
 conventions (hyphenated tens, no "and").
 
+### Dates, times and quantities
+
+- **Month dates:** `Feb. 13, 2007`, `February 13th, 2007`, `Feb 2007`.
+- **Numeric dates:** `02/03/2007` and `2007-03-02` (day-before-month), with
+  range checks so `99/99/2007` is left alone.
+- **Ordinals:** `21st` → "twenty-first"; `100th` → "one hundredth".
+- **Decades:** `1990s` → "nineteen nineties"; `'80s`/`80s` → "eighties".
+- **Currency:** `$5`, `£9`, `€20`, `$1500`, `$12.34` (→ "… and thirty-four
+  cents"), `£3.50` (→ "… and fifty pence"), `5 dollars`.
+- **Percentages:** `50%`, `3.5 %`; `1500%` is read as a quantity, not a year.
+- **Ranges:** `3-5` → "three to five"; `1990-2000` → "nineteen ninety to two
+  thousand".
+- **Times:** `9:30`, `09:05` (→ "nine oh five"), `9:30 p.m.`, `7:00 a.m.`.
+- **Fractions:** `3/4` → "three quarters"; `1/2` → "one half".
+- **Units:** `5 km`, `6 ft.`, `70 mph`, `20 °C`, `10 kg`, `25°`, `2 x 3`. Short
+  units that double as prose words (`in`, `m`, `l`, `g`, `h`) are excluded.
+
+### Symbols, non-prose and lexicon
+
+- Symbols: `&` → "and", `+` → "plus", `=` → "equals", `©`/`®`/`™`, `%`, `°`.
+- Inline code, URLs and emails are spoken as letter sequences (`user@example.com`
+  → "u s e r at e x a m p l e dot c o m").
+- All-caps initialisms: known acronyms use a pronunciation (`NASA` → "Nasa");
+  unlisted vowel-less caps are spelled out.
+
 ## Planned rules
 
-Ordered roughly by value. Each item lists the intended approach.
+Remaining work, roughly by value.
 
 ### Numbers and quantities
 
 | Rule | Examples | Notes |
 | --- | --- | --- |
-| Ordinals | `1st`, `2nd`, `23rd` | Needed because `1st` is currently left alone. |
-| Percentages | `50%`, `3.5 %` | Append "percent". |
-| Currency | `$5`, `£1,234.56`, `€9` | Append the spoken currency noun; handle cents. |
-| Ranges | `3-5`, `1990–2000`, `pp. 5–7` | "three to five" / "nineteen ninety to two thousand". |
-| Fractions | `3/4`, `½` | "three quarters"; unicode vulgar fractions. |
-| Measurements / units | `5 km`, `6 ft.`, `70 mph`, `20°C` | Expand only when a number precedes; `ft.` was excluded from abbreviations for this reason. |
-| Dates | `13 Feb. 2007`, `02/03` | Ordinal day, month name; locale-dependent day/month order. |
-| Times | `9:30`, `7 p.m.` | "nine thirty", "seven in the evening". |
-| Decades | `1990s`, `'80s` | "nineteen nineties", "eighties". |
-| Phone numbers | `555-1234` | Digit-by-digit, preserve grouping. |
-| Roman numerals | `Chapter IV`, `Henry VIII` | Context-gated; risky in isolation. |
 | Scientific / large | `1.5e9`, `10^6` | "one point five times ten to the ninth". |
-| Version / dotted | `1.2.3`, `v2.0` | Currently mis-handled as a partial decimal; emit "one point two point three". |
-| Number spans | `100-200` vs `-5` | Disambiguate range hyphen from negative sign by surrounding context. |
+| Roman numerals | `Chapter IV`, `Henry VIII` | Context-gated; risky in isolation. |
+| Measurements with word units | `5 kilometres`, `70 miles per hour` | Already spelled; expansion of symbols only. |
 
 ### Symbols and punctuation
 
-- `&` → "and"; `@` → "at"; `#` → "number"/"hashtag"; `+` → "plus"; `=` →
-  "equals"; `×`/`x` → "times"; `÷` → "divided by"; `°` → "degrees"; `©`, `®`,
-  `™`.
-- Smart quotes/dashes/ellipsis → plain pauses; collapse repeated punctuation
-  (`!!`, `?!`) to a single sentence terminator; strip or verbalize stray
-  brackets and footnote markers/superscripts.
+- `×`/`x` between words (not numbers), `÷` when spelled out, `§`, `¶`.
+- Footnote markers/superscripts and stray brackets: strip or verbalize.
 
 ### Text hygiene
 
-- Normalize all Unicode whitespace (NBSP, narrow NBSP, ideographic space) and
-  zero-width characters; drop control characters; collapse runs of spaces.
-- Handle line-break hyphenation (`exam-\nple` → "example").
-- Guard against leftover HTML entities and markup fragments.
-- All-caps words and initialisms: decide when to spell out (`NATO` vs "Nato"),
-  ties into the planned lexicon.
-- Possessives and trailing apostrophes (`'90s`, `Smiths'`).
+- All-caps words and initialisms beyond the small acronym list (needs a lexicon).
+- Possessives and trailing apostrophes (`Smiths'`).
 
 ### Language and content classification
 
@@ -157,7 +168,7 @@ Ordered roughly by value. Each item lists the intended approach.
 ### User control and pronunciation
 
 - User lexicon / pronunciation substitutions and regex replacements (already a
-  post-MVP backlog item; this pipeline is the natural host).
+  post-MVP backlog item; `LexiconNormalizer(lexicon)` is the host).
 - "Silence this text" rules for running headers, footers, and page numbers.
 - Per-book overrides for abbreviations, dates, and number style (cardinal vs
   year reading).

@@ -21,10 +21,15 @@ internal class SymbolNormalizer : TextNormalizationRule {
         for ((symbol, words) in SYMBOLS) {
             result = result.replace(symbol, words)
         }
-        return result
+        return NUMBER.replace(result) { match -> NumberSpeller.quantity(match.value) }
     }
 
     private companion object {
+        /** A numeral left between the symbol words and the lexicon. */
+        private val NUMBER = Regex(
+            "(?<![\\p{L}\\p{N}-])(\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?)(?![\\p{L}\\p{N}])",
+        )
+
         /** Applied in this order because some values contain other symbols. */
         private val SYMBOLS = listOf(
             "©" to "copyright",
