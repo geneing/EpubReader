@@ -37,7 +37,7 @@ Versions change frequently. These are dated observations and must be rechecked b
 | Compose | Stable Compose BOM 2026.09.00, required to use the current stable Compose libraries | [Compose release notes](https://developer.android.com/jetpack/androidx/releases/compose), [Compose BOM](https://developer.android.com/develop/ui/compose/bom/bom-mapping). Its resolved artifacts require compile SDK 37; min/target remain API 36. |
 | AndroidX Media3 | 1.11.1 stable, pinned for MediaSession/MediaSessionService and controller surfaces | [Media3 release notes](https://developer.android.com/jetpack/androidx/releases/media3), [MediaSessionService guide](https://developer.android.com/media/media3/session/background-playback). Session metadata and transport controls are the Android integration path for lock-screen, Bluetooth, and compatible automotive clients; verify actual device surfaces. |
 | Readium Kotlin Toolkit | 3.4.0, released 2026-09-11, is the latest stable release checked 2026-09-24 | [Readium releases](https://github.com/readium/kotlin-toolkit/releases), [3.4.0 docs](https://readium.org/kotlin-toolkit/3.4.0/). The docs state Readium is low-level; its TTS navigator supports any publication with a ContentService. |
-| Pocket TTS-LiteRT | Pinned to commit `2dba83888706fb52339767670a36ef22348aecd4` (checked 2026-09-25); MIT-licensed source includes `pockettts-core` and `pockettts-service` | [Pinned source](https://github.com/geneing/PocketTTS-LiteRT/tree/2dba83888706fb52339767670a36ef22348aecd4), [library guide](https://github.com/geneing/PocketTTS-LiteRT/blob/2dba83888706fb52339767670a36ef22348aecd4/docs/library.md), [build notes](https://github.com/geneing/PocketTTS-LiteRT/blob/2dba83888706fb52339767670a36ef22348aecd4/AGENTS.md). The pinned source snapshot is vendored under `third_party/` with provenance and license. |
+| Pocket TTS-LiteRT | Vendored from upstream `main` `be0e64c` plus its uncommitted Tensor G5 FlowLM NPU working-tree changes (captured 2026-10-06); MIT-licensed source includes `pockettts-core` and `pockettts-service` | [Upstream repo](https://github.com/geneing/PocketTTS-LiteRT), [library guide](https://github.com/geneing/PocketTTS-LiteRT/blob/main/docs/library.md), [build notes](https://github.com/geneing/PocketTTS-LiteRT/blob/main/AGENTS.md). The vendored snapshot carries `pockettts-core/src/main/cpp` for the NPU cache bridge; provenance and license are in `third_party/PocketTTS-LiteRT/UPSTREAM.md`. |
 
 ### Important platform constraints
 
@@ -53,7 +53,7 @@ Versions change frequently. These are dated observations and must be rechecked b
 
 ## 3. Pocket TTS/LiteRT findings
 
-The pinned source snapshot (`2dba83888706fb52339767670a36ef22348aecd4`) documents:
+The vendored source snapshot (upstream `main` `be0e64c` + FlowLM NPU working-tree changes, captured 2026-10-06) documents:
 
 - `pockettts-core`: LiteRT inference, model source/delivery, tokenizer/session and host-side orchestration.
 - `pockettts-service`: Android `TextToSpeechService`, which can register Pocket TTS as a system engine; it streams PCM and maps stop to request cancellation.
@@ -62,7 +62,8 @@ The pinned source snapshot (`2dba83888706fb52339767670a36ef22348aecd4`) document
 - Models are intended to be obtained separately from the app, with variant releases and SHA-256 manifest support. Current library docs estimate roughly 81 MB base plus an ~86 MB int8 LM variant; the repository README also describes a total on-device asset footprint around 225 MB in one configuration. Treat disk/RAM requirements as device/configuration dependent and display accurate current estimates.
 - The repo describes model weights sourced from Kyutai. Its current README identifies upstream model weights as CC-BY-4.0 and voice assets as CC-BY-4.0/CC0, depending on voice. Retain notices and audit the precise selected artifact/voice terms before publishing.
 - Voice cloning is not provided by the ungated model package described in the repo and is out of scope.
-- The app uses the pinned `2026.09` / model API 1 manifest for download and includes its manifest locally; model-release endpoint availability and a fresh-install download are not yet verified. Host-to-Pixel ADB provisioning for 15 required model files was verified with pinned per-file hashes on 2026-09-24.
+- The app uses the pinned `2026.09` / model API 1 manifest for download and includes its manifest locally. Host-to-Pixel ADB provisioning with pinned per-file hashes was verified on 2026-09-24 (15 files) and again on 2026-10-06 (16 files, adding the AOT FlowLM graph below). Model-release endpoint availability and a fresh-install download are still not verified.
+- **Tensor G5 NPU:** Tensor NPU graphs are separate AOT-compiled files (a partition replaces the ops), not a runtime accelerator flag, and they are executed by a dispatch shim (`libLiteRtDispatch_GoogleTensor.so`) that is not in the LiteRT Maven AAR but ships in the matching LiteRT GitHub release. Only `arm64-v8a` has a shim. On the Pixel 10 the updated library selects the AOT FlowLM graph `pt_flowlm_fused_st16_ffn12_contiguous_no_truncation_g5.tflite` (~170 MB) with a position-major persistent K/V cache and Google Tensor HIGH_PERFORMANCE mode; the AOT (non-NPU) upgrades are skipped. Verified 2026-10-06: `PocketTTS: engine lm:NPU dectx:NPU dec:GPU`, `G5 HIGH_PERFORMANCE active`. This graph is not yet in the upstream release manifest, so it is host-provisioned only.
 
 ## 4. Design implications
 
