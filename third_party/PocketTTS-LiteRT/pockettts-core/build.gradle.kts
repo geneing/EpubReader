@@ -7,14 +7,31 @@ extensions.configure<com.android.build.gradle.LibraryExtension> {
     namespace = "dev.pockettts"
     compileSdk = 35
 
+    buildFeatures {
+        // PocketTtsConfig gates its timing traces on BuildConfig.DEBUG.
+        buildConfig = true
+    }
+
     defaultConfig {
         // 31+ because the Tensor G5 NPU dispatch runtime requires it.
         minSdk = 31
         consumerProguardFiles("consumer-rules.pro")
+        externalNativeBuild {
+            cmake { cppFlags += "-std=c++17" }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    externalNativeBuild {
+        // The Google Tensor NPU cache bridge (pockettts_kv_slice) is compiled
+        // here; only arm64-v8a has a Tensor dispatch shim, so the app restricts
+        // the ABI set.
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
     testOptions {
         unitTests.isReturnDefaultValues = true

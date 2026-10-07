@@ -12,9 +12,21 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import java.util.LinkedHashMap
+import java.util.Arrays
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+
+internal data class ResidentLmStepRun(
+    val control: FloatArray,
+    val inputNs: Long,
+    val runNs: Long,
+    val readNs: Long,
+    val outputMapNs: Long = 0,
+    val cacheMapNs: Long = 0,
+    val cacheCopyNs: Long = 0,
+    val cacheUnmapNs: Long = 0,
+)
 
 /**
  * Owns the compiled graphs, the host assets and the worker thread. Create one
@@ -37,6 +49,8 @@ class PocketTtsEngine(
     val streamW: Int = config.streamW
     val codecContinuity: Boolean = config.codecContinuity
     val noiseSeed: Long? = config.noiseSeed
+    internal val streamDecoderGraphName: String =
+        config.streamDecoderGraph ?: PocketTts.deconlyGraph(streamW)
 
     /** The voices this engine can speak, first = default. */
     val voices: List<Voice> = config.voices
@@ -44,6 +58,10 @@ class PocketTtsEngine(
 
     /** Per-graph compile time (ms), keyed lm/lm_ms/dectx/dec/dec_w. */
     val loadMs = LinkedHashMap<String, Long>()
+
+    /** Backend that successfully created each graph; non-NPU failures retry on CPU. */
+    private val loadedAccelerators = LinkedHashMap<String, Accel>()
+    val runtimeAccelerators: Map<String, Accel> get() = loadedAccelerators.toMap()
 
     private var npuEnvironment: Environment? = null
 
@@ -62,7 +80,8 @@ class PocketTtsEngine(
     private fun load(name: String, key: String, accel: Accel): CompiledModel {
         val file = if (accel == Accel.NPU) PocketTts.g5Variant(name) else name
         val p = models.store.file(file).absolutePath
-        val t = System.nanoTime()
+        val t = if (BuildConfig.DEBUG) System.nanoTime() else 0L
+        var actualAccel = accel
         val model = try {
             when (accel) {
                 Accel.CPU -> CompiledModel.create(p, CompiledModel.Options(Accelerator.CPU), null)
@@ -90,9 +109,16 @@ class PocketTtsEngine(
             // The NPU partition only has a dispatch kernel, so a CPU retry of the
             // same file cannot work; a silent fallback would hide a mis-wired NPU.
             if (accel == Accel.NPU) throw e
+            actualAccel = Accel.CPU
+            android.util.Log.w(
+                "PocketTTS",
+                "$key graph $name failed to load on $accel; retrying on CPU",
+                e,
+            )
             CompiledModel.create(p, CompiledModel.Options(Accelerator.CPU), null)
         }
-        loadMs[key] = (System.nanoTime() - t) / 1_000_000
+        if (BuildConfig.DEBUG) loadMs[key] = (System.nanoTime() - t) / 1_000_000
+        loadedAccelerators[key] = actualAccel
         return model
     }
 
@@ -100,12 +126,20 @@ class PocketTtsEngine(
     val lmGraphName: String = config.lmGraph ?: PocketTts.LM
 
     internal val lm: CompiledModel = load(lmGraphName, "lm", placement.lm)
+    private val highPerformanceLm: G5PerformanceModel? = if (config.g5HighPerformance) {
+        val graph = PocketTts.g5Variant(lmGraphName)
+        G5PerformanceModel.create(npuEnv(), models.store.file(graph).absolutePath).also {
+            if (BuildConfig.DEBUG) {
+                android.util.Log.i("PocketTTS", "G5 HIGH_PERFORMANCE active for $graph")
+            }
+        }
+    } else null
     internal val lmMs: CompiledModel? =
         if (lmSteps > 1) load(PocketTts.msGraph(lmSteps), "lm_ms", placement.lm) else null
     internal val dectx: CompiledModel = load(PocketTts.DEC_TX, "dectx", placement.dectx)
     internal val deconly: CompiledModel = load(PocketTts.DECONLY, "dec", placement.deconly)
-    internal val deconlyW: CompiledModel? = if (models.store.exists(PocketTts.deconlyGraph(streamW))) {
-        load(PocketTts.deconlyGraph(streamW), "dec_w", placement.deconly)
+    internal val deconlyW: CompiledModel? = if (models.store.exists(streamDecoderGraphName)) {
+        load(streamDecoderGraphName, "dec_w", placement.deconly)
     } else {
         null
     }
@@ -121,9 +155,43 @@ class PocketTtsEngine(
     private val lmStepIn: List<TensorBuffer>? =
         runCatching { lm.createInputBuffers(1) }.getOrNull()
 
-    internal val lmIn: List<TensorBuffer> = lmStepIn ?: lm.createInputBuffers()
-    internal val lmOut: List<TensorBuffer> =
-        if (lmStepIn != null) lm.createOutputBuffers(1) else lm.createOutputBuffers()
+    internal val lmIn: List<TensorBuffer> = if (config.npuResidentCache) {
+        emptyList()
+    } else {
+        lmStepIn ?: lm.createInputBuffers()
+    }
+    internal val lmOut: List<TensorBuffer> = if (config.npuResidentCache) {
+        emptyList()
+    } else if (lmStepIn != null) {
+        lm.createOutputBuffers(1)
+    } else {
+        lm.createOutputBuffers()
+    }
+
+    /**
+     * The experimental graph has eight inputs and three outputs:
+     * x/cos/sin/mask/K/V/noise/write-mask -> control/next-K/next-V. The two
+     * model-created cache banks exchange input/output roles after each run.
+     * The 33-float control tensor is the only output read by Kotlin.
+     */
+    internal val usesNpuResidentCache: Boolean = config.npuResidentCache
+    internal val usesNpuSliceCache: Boolean = config.npuSliceCache
+    internal val usesNpuPositionMajorCache: Boolean = config.npuPositionMajorCache
+    private val positionMajorSeedK: FloatArray? = if (usesNpuPositionMajorCache) {
+        FloatArray(PocketTts.G * PocketTts.PMAX * PocketTts.HD)
+    } else null
+    private val positionMajorSeedV: FloatArray? = if (usesNpuPositionMajorCache) {
+        FloatArray(PocketTts.G * PocketTts.PMAX * PocketTts.HD)
+    } else null
+    internal val lmResidentIn: MutableList<TensorBuffer>? =
+        if (usesNpuResidentCache) lm.createInputBuffers().toMutableList() else null
+    internal val lmResidentOut: MutableList<TensorBuffer>? =
+        if (usesNpuResidentCache) lm.createOutputBuffers().toMutableList() else null
+    private val residentBankAK: TensorBuffer? = lmResidentIn?.getOrNull(4)
+    private val residentBankAV: TensorBuffer? = lmResidentIn?.getOrNull(5)
+    private val residentBankBK: TensorBuffer? = lmResidentOut?.getOrNull(1)
+    private val residentBankBV: TensorBuffer? = lmResidentOut?.getOrNull(2)
+    private val residentWriteMask = if (usesNpuResidentCache) FloatArray(PocketTts.PMAX) else null
 
     /**
      * Prompt prefill is a second signature of [lm], not a separate graph: it
@@ -140,10 +208,194 @@ class PocketTtsEngine(
             runCatching { lm.createOutputBuffers(0) }.getOrNull()
         } else null
 
+    init {
+        if (usesNpuResidentCache) {
+            check(lmResidentIn?.size == 8) {
+                "NPU-resident FlowLM graph must have 8 inputs; got ${lmResidentIn?.size}"
+            }
+            check(lmResidentOut?.size == 3) {
+                "NPU-resident FlowLM graph must have 3 outputs; got ${lmResidentOut?.size}"
+            }
+            check(
+                residentBankAK != null && residentBankAV != null &&
+                    residentBankBK != null && residentBankBV != null,
+            ) { "NPU-resident FlowLM cache banks are missing" }
+        }
+        if (usesNpuSliceCache) {
+            check(lmIn.size == 7 && lmOut.size == 1) {
+                "NPU slice FlowLM expects 7 inputs and one packed output; got ${lmIn.size}/${lmOut.size}"
+            }
+        }
+    }
+
+    /** Actual backing types; 2 is AHardwareBuffer, 1 is host memory. */
+    internal val npuSliceBufferTypes: IntArray? = if (BuildConfig.DEBUG && usesNpuSliceCache) {
+        NpuSliceCacheBridge.bufferTypes(lmIn[4], lmIn[5], lmOut[0]).also {
+            android.util.Log.i("PocketTTSTime", "NPU slice buffer types K/V/out=${it.joinToString()}")
+        }
+    } else null
+
     /** Run the fused step on buffers created above (last signature when named). */
     internal fun runLm(ins: List<TensorBuffer>, outs: List<TensorBuffer>) {
-        if (lmStepIn != null) lm.run(ins, outs, 1) else lm.run(ins, outs)
+        if (highPerformanceLm != null) {
+            highPerformanceLm.run(ins, outs, if (lmStepIn != null) 1 else 0)
+        } else if (lmStepIn != null) lm.run(ins, outs, 1) else lm.run(ins, outs)
     }
+
+    /** Opt-in, low-level hardware metrics for the actual native G5 FlowLM model. */
+    fun startLmHardwareMetrics(detailLevel: Int = 0) {
+        requireNotNull(highPerformanceLm) {
+            "G5 HIGH_PERFORMANCE FlowLM is required for hardware metrics"
+        }.startMetricsCollection(detailLevel)
+    }
+
+    fun stopLmHardwareMetrics(): List<String> = requireNotNull(highPerformanceLm) {
+        "G5 HIGH_PERFORMANCE FlowLM is required for hardware metrics"
+    }.stopMetricsCollection()
+
+    /** Seed one cache bank from the selected voice and restore A -> B roles. */
+    internal fun resetNpuResidentCache(k: FloatArray, v: FloatArray): Long {
+        check(usesNpuResidentCache) { "NPU-resident cache is disabled" }
+        val expected = PocketTts.G * PocketTts.PMAX * PocketTts.HD
+        require(k.size == expected && v.size == expected) {
+            "NPU-resident cache expects $expected floats per bank; got ${k.size}/${v.size}"
+        }
+        val start = if (BuildConfig.DEBUG) System.nanoTime() else 0L
+        val inputs = requireNotNull(lmResidentIn)
+        val outputs = requireNotNull(lmResidentOut)
+        val bankAK = requireNotNull(residentBankAK)
+        val bankAV = requireNotNull(residentBankAV)
+        val bankBK = requireNotNull(residentBankBK)
+        val bankBV = requireNotNull(residentBankBV)
+        bankAK.writeFloat(k)
+        bankAV.writeFloat(v)
+        inputs[4] = bankAK
+        inputs[5] = bankAV
+        outputs[1] = bankBK
+        outputs[2] = bankBV
+        return if (BuildConfig.DEBUG) System.nanoTime() - start else 0L
+    }
+
+    /** Run one frame and chain full K/V outputs without reading cache data. */
+    internal fun runNpuResidentLm(
+        emb: FloatArray,
+        cos: FloatArray,
+        sin: FloatArray,
+        mask: FloatArray,
+        noise: FloatArray,
+        position: Int,
+    ): ResidentLmStepRun {
+        check(usesNpuResidentCache) { "NPU-resident cache is disabled" }
+        require(position in 0 until PocketTts.PMAX) { "cache position out of range: $position" }
+        val inputs = requireNotNull(lmResidentIn)
+        val outputs = requireNotNull(lmResidentOut)
+        val writeMask = requireNotNull(residentWriteMask)
+
+        var started = if (BuildConfig.DEBUG) System.nanoTime() else 0L
+        inputs[0].writeFloat(emb)
+        inputs[1].writeFloat(cos)
+        inputs[2].writeFloat(sin)
+        inputs[3].writeFloat(mask)
+        inputs[6].writeFloat(noise)
+        Arrays.fill(writeMask, 0f)
+        writeMask[position] = 1f
+        inputs[7].writeFloat(writeMask)
+        val inputNs = if (BuildConfig.DEBUG) System.nanoTime() - started else 0L
+
+        started = if (BuildConfig.DEBUG) System.nanoTime() else 0L
+        lm.run(inputs, outputs, 0)
+        val runNs = if (BuildConfig.DEBUG) System.nanoTime() - started else 0L
+
+        started = if (BuildConfig.DEBUG) System.nanoTime() else 0L
+        val control = outputs[0].readFloat()
+        val readNs = if (BuildConfig.DEBUG) System.nanoTime() - started else 0L
+        check(control.size == 1 + PocketTts.LDIM) {
+            "NPU-resident FlowLM control output must have ${1 + PocketTts.LDIM} floats; got ${control.size}"
+        }
+
+        val oldK = inputs[4]
+        val oldV = inputs[5]
+        inputs[4] = outputs[1]
+        inputs[5] = outputs[2]
+        outputs[1] = oldK
+        outputs[2] = oldV
+        return ResidentLmStepRun(control, inputNs, runNs, readNs)
+    }
+
+    /** Seed persistent NPU inputs once per utterance; later updates touch one row. */
+    internal fun resetNpuSliceCache(k: FloatArray, v: FloatArray): Long {
+        check(usesNpuSliceCache) { "NPU slice cache is disabled" }
+        val expected = PocketTts.G * PocketTts.PMAX * PocketTts.HD
+        require(k.size == expected && v.size == expected)
+        val start = if (BuildConfig.DEBUG) System.nanoTime() else 0L
+        if (usesNpuPositionMajorCache) {
+            fun positionMajor(groupMajor: FloatArray, out: FloatArray) {
+                for (p in 0 until PocketTts.PMAX) {
+                    for (g in 0 until PocketTts.G) {
+                        System.arraycopy(
+                            groupMajor, (g * PocketTts.PMAX + p) * PocketTts.HD,
+                            out, (p * PocketTts.G + g) * PocketTts.HD,
+                            PocketTts.HD,
+                        )
+                    }
+                }
+            }
+            val seedK = requireNotNull(positionMajorSeedK)
+            val seedV = requireNotNull(positionMajorSeedV)
+            positionMajor(k, seedK)
+            positionMajor(v, seedV)
+            lmIn[4].writeFloat(seedK)
+            lmIn[5].writeFloat(seedV)
+        } else {
+            lmIn[4].writeFloat(k)
+            lmIn[5].writeFloat(v)
+        }
+        return if (BuildConfig.DEBUG) System.nanoTime() - start else 0L
+    }
+
+    /** Uses the existing packed-output G5 graph without a Kotlin K/V round-trip. */
+    internal fun runNpuSliceLm(
+        emb: FloatArray, cos: FloatArray, sin: FloatArray, mask: FloatArray,
+        noise: FloatArray, position: Int,
+    ): ResidentLmStepRun {
+        check(usesNpuSliceCache) { "NPU slice cache is disabled" }
+        require(position in 0 until PocketTts.PMAX)
+        var started = if (BuildConfig.DEBUG) System.nanoTime() else 0L
+        lmIn[0].writeFloat(emb)
+        lmIn[1].writeFloat(cos)
+        lmIn[2].writeFloat(sin)
+        lmIn[3].writeFloat(mask)
+        lmIn[6].writeFloat(noise)
+        val inputNs = if (BuildConfig.DEBUG) System.nanoTime() - started else 0L
+        started = if (BuildConfig.DEBUG) System.nanoTime() else 0L
+        runLm(lmIn, lmOut)
+        val runNs = if (BuildConfig.DEBUG) System.nanoTime() - started else 0L
+        started = if (BuildConfig.DEBUG) System.nanoTime() else 0L
+        val timings = if (BuildConfig.DEBUG) LongArray(4) else null
+        val control = NpuSliceCacheBridge.update(
+            lmIn[4], lmIn[5], lmOut[0], position,
+            PocketTts.PMAX, PocketTts.G, PocketTts.HD,
+            usesNpuPositionMajorCache, timings,
+        )
+        if (BuildConfig.DEBUG && config.verifyNpuSliceRows) {
+            val delta = NpuSliceCacheBridge.rowMaxDifference(
+                lmIn[4], lmIn[5], lmOut[0], position,
+                PocketTts.PMAX, PocketTts.G, PocketTts.HD,
+                usesNpuPositionMajorCache,
+            )
+            check(delta == 0f) { "NPU slice K/V row mismatch at $position: $delta" }
+        }
+        val readNs = if (BuildConfig.DEBUG) System.nanoTime() - started else 0L
+        check(control.size == 1 + PocketTts.LDIM)
+        return ResidentLmStepRun(
+            control, inputNs, runNs, readNs,
+            timings?.get(0) ?: 0L,
+            timings?.get(1) ?: 0L,
+            timings?.get(2) ?: 0L,
+            timings?.get(3) ?: 0L,
+        )
+    }
+
     internal val lmMsIn = lmMs?.createInputBuffers()
     internal val lmMsOut = lmMs?.createOutputBuffers()
     internal val dectxIn = dectx.createInputBuffers()
@@ -213,10 +465,12 @@ class PocketTtsEngine(
                 FloatArray(n) { android.util.Half.toFloat(bb.short) },
                 t,
             ).also {
-                android.util.Log.i(
-                    "PocketTTSTime",
-                    "voice loaded: $name (${it.len} frames, cache=${voiceCache.size}/$VOICE_CACHE)",
-                )
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.i(
+                        "PocketTTSTime",
+                        "voice loaded: $name (${it.len} frames, cache=${voiceCache.size}/$VOICE_CACHE)",
+                    )
+                }
             }
         }
     }
@@ -251,14 +505,16 @@ class PocketTtsEngine(
         executor.submit(java.util.concurrent.Callable { block() })
 
     init {
-        android.util.Log.i(
-            "PocketTTS",
-            "engine ${placement.label} @ ${Placement.renderer()} (${lmGraphName}) " +
-                "lmSig=${if (lmStepIn != null) 1 else 0} " +
-                "prefill=${if (prefillIn != null) "${PocketTts.PREFILL_SIGNATURE}/${prefillIn.size}" else "none"} " +
-                "heap=${Runtime.getRuntime().totalMemory() shr 20}MiB " +
-                "native=${android.os.Debug.getNativeHeapAllocatedSize() shr 20}MiB",
-        )
+        if (BuildConfig.DEBUG) {
+            android.util.Log.i(
+                "PocketTTS",
+                "engine ${placement.label} @ ${Placement.renderer()} (${lmGraphName}) " +
+                    "lmSig=${if (lmStepIn != null) 1 else 0} " +
+                    "prefill=${if (prefillIn != null) "${PocketTts.PREFILL_SIGNATURE}/${prefillIn.size}" else "none"} " +
+                    "heap=${Runtime.getRuntime().totalMemory() shr 20}MiB " +
+                    "native=${android.os.Debug.getNativeHeapAllocatedSize() shr 20}MiB",
+            )
+        }
     }
 
     /** A fresh utterance. Sessions are cheap; the graphs stay here. */
@@ -287,9 +543,10 @@ class PocketTtsEngine(
     override fun close() {
         executor.shutdownNow()
         listOf(
-            lmIn, lmOut, lmMsIn, lmMsOut, dectxIn, dectxOut, deconlyIn, deconlyOut,
+            lmIn, lmOut, lmResidentIn, lmResidentOut, lmMsIn, lmMsOut, dectxIn, dectxOut, deconlyIn, deconlyOut,
             deconlyWIn, deconlyWOut, prefillIn, prefillOut,
         ).forEach { l -> l?.forEach { it.close() } }
+        highPerformanceLm?.close()
         lm.close(); lmMs?.close(); dectx.close(); deconly.close(); deconlyW?.close()
         embChannel.close()
         npuEnvironment?.close()
@@ -308,8 +565,12 @@ class PocketTtsEngine(
         /** Every model file a config needs, for `ensure()` and packaging. */
         fun requiredFiles(config: PocketTtsConfig): List<String> {
             val f = LinkedHashSet<String>()
-            f += config.lmGraph ?: PocketTts.LM
-            if (config.lmSteps > 1) f += PocketTts.msGraph(config.lmSteps)
+            val lm = config.lmGraph ?: PocketTts.LM
+            f += if (config.placement.lm == Accel.NPU) PocketTts.g5Variant(lm) else lm
+            if (config.lmSteps > 1) {
+                val ms = PocketTts.msGraph(config.lmSteps)
+                f += if (config.placement.lm == Accel.NPU) PocketTts.g5Variant(ms) else ms
+            }
             if (config.placement.dectx == Accel.NPU) {
                 f += PocketTts.g5Variant(PocketTts.DEC_TX)
             }

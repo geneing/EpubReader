@@ -58,9 +58,49 @@ class PocketTtsConfig(
      * one voice file must be present or synthesis cannot work at all.
      */
     val voices: List<Voice> = defaultVoices(models),
+    /** Override the streaming SEANet graph filename; null selects [PocketTts.deconlyGraph]. */
+    val streamDecoderGraph: String? = null,
+    /**
+     * Use the experimental Tensor G5 graph whose K/V outputs are full updated
+     * cache banks, chaining two LiteRT buffers between autoregressive steps.
+     * Requires a one-step AOT graph override and an NPU placement. The graph is
+     * opt-in because its output-bank copy cost and speech quality must be
+     * measured against the CPU int8 control on the target device.
+     */
+    val npuResidentCache: Boolean = false,
+    /** Patch one output K/V row into persistent LiteRT inputs through a native buffer lock. */
+    val npuSliceCache: Boolean = false,
+    /** Use a position-major K/V graph so each native cache row write is contiguous. */
+    val npuPositionMajorCache: Boolean = false,
+    /** Check every patched row against the graph output; adds synchronization overhead. */
+    val verifyNpuSliceRows: Boolean = false,
+    /** Experimental Google Tensor HIGH_PERFORMANCE mode on the NPU slice path. */
+    val g5HighPerformance: Boolean = false,
 ) {
     init {
         require(voices.isNotEmpty()) { "a config needs at least one voice" }
+        if (npuResidentCache) {
+            require(placement.lm == Accel.NPU) { "NPU-resident cache requires lm:NPU" }
+            require(lmGraph != null) { "NPU-resident cache requires its AOT lmGraph override" }
+            require(lmSteps == 1) { "NPU-resident cache currently supports one LM step per invocation" }
+            require(!usePrefill) { "NPU-resident cache uses the one-step graph for prompt tokens" }
+        }
+        if (npuSliceCache) {
+            require(!npuResidentCache) { "select one NPU cache protocol" }
+            require(placement.lm == Accel.NPU) { "NPU slice cache requires lm:NPU" }
+            require(lmGraph != null) { "NPU slice cache requires its AOT lmGraph override" }
+            require(lmSteps == 1) { "NPU slice cache supports one LM step per invocation" }
+            require(!usePrefill) { "NPU slice cache uses the one-step graph for prompt tokens" }
+        }
+        require(!npuPositionMajorCache || npuSliceCache) {
+            "position-major cache requires NPU slice cache"
+        }
+        require(!verifyNpuSliceRows || npuSliceCache) {
+            "row verification requires NPU slice cache"
+        }
+        require(!g5HighPerformance || npuSliceCache) {
+            "G5 high performance requires NPU slice cache"
+        }
     }
 
     companion object {
@@ -73,14 +113,26 @@ class PocketTtsConfig(
 
         /**
          * The device policy: adb-pushed models first, GitHub release fallback,
-         * and [Placement.default] for the accelerator split.
+         * and [Placement.default] for the accelerator split. On Tensor G5,
+         * select the tuned FlowLM AOT graph with the persistent position-major
+         * cache and HIGH_PERFORMANCE mode when that graph is installed.
          */
         fun default(
             context: Context,
             models: PocketTtsModels = PocketTtsModels.default(context),
         ): PocketTtsConfig {
             val dir = context.getExternalFilesDir(null) ?: context.filesDir
-            return PocketTtsConfig(models, Placement.default(context, dir))
+            val npuLmGraphInstalled = models.store.exists(PocketTts.LM_G5_HIGH_PERFORMANCE)
+            val placement = Placement.default(context, dir, npuLmGraphInstalled)
+            val useNpuFlowLm = placement.lm == Accel.NPU
+            return PocketTtsConfig(
+                models = models,
+                placement = placement,
+                lmGraph = PocketTts.LM_G5_HIGH_PERFORMANCE.takeIf { useNpuFlowLm },
+                npuSliceCache = useNpuFlowLm,
+                npuPositionMajorCache = useNpuFlowLm,
+                g5HighPerformance = useNpuFlowLm,
+            )
         }
     }
 }
@@ -157,19 +209,21 @@ class SonicStretcher(
     fun push(chunk: FloatArray): FloatArray {
         val s = stream ?: return chunk
         if (chunk.isEmpty()) return chunk
-        val t = System.nanoTime()
+        val t = if (BuildConfig.DEBUG) System.nanoTime() else 0L
         s.writeFloatToStream(chunk, chunk.size)
         val out = read(s)
-        val ms = (System.nanoTime() - t) / 1_000_000
-        sonicMs += ms
-        inSamples += chunk.size
-        outSamples += out.size
-        pushes++
-        Log.i(
-            "PocketTTSTime",
-            "sonic push#$pushes in=${chunk.size} out=${out.size} ${ms}ms " +
-                "(speed=$speed pitch=$shifted)",
-        )
+        if (BuildConfig.DEBUG) {
+            val ms = (System.nanoTime() - t) / 1_000_000
+            sonicMs += ms
+            inSamples += chunk.size
+            outSamples += out.size
+            pushes++
+            Log.i(
+                "PocketTTSTime",
+                "sonic push#$pushes in=${chunk.size} out=${out.size} ${ms}ms " +
+                    "(speed=$speed pitch=$shifted)",
+            )
+        }
         return out
     }
 

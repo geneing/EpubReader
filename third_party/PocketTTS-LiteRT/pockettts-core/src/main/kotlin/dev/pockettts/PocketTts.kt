@@ -51,6 +51,10 @@ object PocketTts {
      */
     const val LM = "pt_flowlm_fused_dyn8_all.tflite"
 
+    /** Compiled static W8/A16 FlowLM AOT graph used by the Tensor G5 default. */
+    const val LM_G5_HIGH_PERFORMANCE =
+        "pt_flowlm_fused_st16_ffn12_contiguous_no_truncation_g5.tflite"
+
     /**
      * Name `litert_torch` gives the fused graph's default signature. The
      * head-less prompt batch is a second signature ([PREFILL_SIGNATURE]) in the
@@ -80,8 +84,9 @@ object PocketTts {
 
     const val DEC_TX = "pt_mimi_dec_tx_fp16.tflite"
 
-    /** AOT-compiled Tensor G5 variant of a stock graph (NPU placement). */
-    fun g5Variant(name: String) = name.replace(".tflite", "_g5.tflite")
+    /** AOT-compiled Tensor G5 graph (NPU placement); accepts base or compiled names. */
+    fun g5Variant(name: String) =
+        if (name.endsWith("_g5.tflite")) name else name.replace(".tflite", "_g5.tflite")
 
     /** One-shot SEANet decoder. */
     const val DECONLY = "pt_mimi_deconly_fp16.tflite"
@@ -171,7 +176,7 @@ data class Voice(
     }
 }
 
-/** Stage timings for one synthesis call (ms unless noted). */
+/** Stage timings for one synthesis call (ms unless noted); populated in debug builds. */
 data class TtsProfile(
     val lmSteps: Int,
     val promptSteps: Int,
@@ -189,6 +194,13 @@ data class TtsProfile(
     /** Time to the first audio chunk (streaming), or -1 for one-shot. */
     val firstChunkMs: Long = -1,
     val audioChunks: Int = 0,
+    /** Native NPU slice path: packed-output map, cache maps, row copy, unmaps. */
+    val lmOutputMapMs: Long = 0,
+    val lmCacheMapMs: Long = 0,
+    val lmCacheCopyMs: Long = 0,
+    val lmCacheUnmapMs: Long = 0,
+    /** LiteRtTensorBufferType for cache K/V and graph output, if available. */
+    val lmBufferTypes: String = "",
 )
 
 /** One utterance's result. [audio] is 24 kHz mono float PCM, [ms] is wall clock. */
