@@ -276,9 +276,19 @@ class BookPlaybackService : MediaSessionService() {
         val existingNavigator = ttsNavigator
         if (activeBookUri == uriString && existingNavigator != null) {
             lifecycleScope.launch {
-                if (initialLocator != null) {
+                val activePublication = publication
+                val target = if (alignToSelection || initialLocator == null || activePublication == null) {
+                    initialLocator
+                } else {
+                    withContext(Dispatchers.Default) {
+                        runCatching {
+                            PublicationSentenceIterator(activePublication, null).resolve(initialLocator)
+                        }.getOrNull() ?: initialLocator
+                    }
+                }
+                if (target != null) {
                     val before = existingNavigator.location.value
-                    existingNavigator.go(initialLocator)
+                    existingNavigator.go(target)
                     withTimeoutOrNull(LOCATION_CHANGE_TIMEOUT_MS) {
                         existingNavigator.location.first {
                             it.utterance != before.utterance || it.href != before.href
@@ -322,13 +332,27 @@ class BookPlaybackService : MediaSessionService() {
                 val actualAuthor = book?.author?.takeIf(String::isNotBlank)
                     ?: opened.publication.metadata.authors.firstOrNull { it.name.isNotBlank() }?.name
                 foregroundBookTitle = actualTitle
+                val chosenLocator = initialLocator
+                    ?: book?.lastLocatorJson?.let { runCatching { Locator.fromJSON(JSONObject(it)) }.getOrNull() }
+                    ?: opened.initialLocator
+                // Normalize to a locator the narration engine can seek to. The visual
+                // navigator hands over JS-generated selectors that the content parser
+                // cannot match (restarting at the top of the chapter), and Readium's own
+                // TTS navigator only understands `cssSelector`.
+                val startLocator = if (alignToSelection) {
+                    chosenLocator
+                } else {
+                    withContext(Dispatchers.Default) {
+                        runCatching {
+                            PublicationSentenceIterator(opened.publication, null).resolve(chosenLocator)
+                        }.getOrNull() ?: chosenLocator
+                    }
+                }
                 val navigator = createNarration(
                     publication = opened.publication,
                     title = actualTitle,
                     author = actualAuthor,
-                    initialLocator = initialLocator
-                        ?: book?.lastLocatorJson?.let { runCatching { Locator.fromJSON(JSONObject(it)) }.getOrNull() }
-                        ?: opened.initialLocator,
+                    initialLocator = startLocator,
                     mediaId = uriString,
                 )
                 ttsNavigator = navigator

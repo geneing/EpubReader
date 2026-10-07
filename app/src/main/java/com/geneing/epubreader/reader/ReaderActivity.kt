@@ -705,8 +705,23 @@ class ReaderActivity : FragmentActivity() {
         }
         lifecycleScope.launch {
             try {
-                val visibleLocator = currentVisualNavigator()?.firstVisibleElementLocator()
-                startTtsAt(visibleLocator)
+                val navigator = currentVisualNavigator()
+                val visibleLocator = navigator?.firstVisibleElementLocator()
+                // The JS-generated selector in `visibleLocator` cannot be resolved by
+                // the content iterator's HTML parser, and it carries no progression.
+                // Overlay the navigator's progression so the narration seek can find
+                // the block instead of restarting at the top of the chapter.
+                val currentLocator = navigator?.currentLocator?.value
+                val startLocator = when {
+                    visibleLocator != null && currentLocator != null -> visibleLocator.copyWithLocations(
+                        progression = currentLocator.locations.progression,
+                        position = currentLocator.locations.position,
+                        totalProgression = currentLocator.locations.totalProgression,
+                    )
+                    visibleLocator != null -> visibleLocator
+                    else -> currentLocator
+                }
+                startTtsAt(startLocator)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {

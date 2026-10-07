@@ -44,10 +44,79 @@ internal class PublicationSentenceIterator(
     private var buffer: List<Sentence> = emptyList()
     private var cursor: Int = -1
 
-    fun seek(locator: Locator?) {
+    suspend fun seek(locator: Locator?) {
         publicationIterator = createIterator(locator)
         buffer = emptyList()
         cursor = -1
+        val target = locator?.locations?.progression
+        if (target != null && target > 0.0 && target < 1.0) {
+            seekToProgression(locator.href, target)
+        }
+    }
+
+    /**
+     * Resolves [locator] to the publication locator of the sentence it points at,
+     * carrying the content parser's own CSS selector. Engines that seek solely by
+     * `cssSelector` (Readium's TTS navigator) then land correctly, and selectors
+     * produced by the visual navigator's JavaScript that the parser cannot match are
+     * normalized. Returns [locator] unchanged when there is nothing to resolve to.
+     */
+    suspend fun resolve(locator: Locator?): Locator? {
+        if (locator == null) return null
+        seek(locator)
+        val first = next() ?: return locator
+        val resolved = locatorFor(first)
+        // Keep the caller's text context (e.g. a selected sentence) so engines that
+        // align by text can still do so; only the selector/progression is normalized.
+        return if (locator.text == Locator.Text()) resolved else resolved.copy(text = locator.text)
+    }
+
+    private fun locatorFor(sentence: Sentence): Locator {
+        val link = publication.readingOrder[sentence.resourceIndex]
+        val base = publication.locatorFromLink(link)
+            ?: error("Reading order item has no locator.")
+        return base.copy(locations = sentence.locations, text = sentence.textContext)
+    }
+
+    /**
+     * Positions the iterator at the block containing [target], a progression within
+     * the resource.
+     *
+     * The content iterator only honors a locator's `cssSelector`. The visual
+     * navigator's `firstVisibleElementLocator()` produces a selector from the live
+     * DOM (`:root > :nth-child(2) > ...`) that Jsoup cannot match, and the reader's
+     * `currentLocator` carries no selector at all, so both fall back to the start of
+     * the resource. Resolving the target progression recovers the intended block
+     * instead of restarting at the top of the chapter.
+     */
+    private suspend fun seekToProgression(href: Url, target: Double) {
+        // Collect the elements up to the target without tokenizing them; only the
+        // anchor is split into sentences. When the CSS selector already resolved to
+        // the right block (the common skip case), the scan stops after one element.
+        val elements = ArrayList<Content.Element>()
+        val progressions = ArrayList<Double?>()
+        var crossedIntoNextResource = false
+        while (true) {
+            val element = publicationIterator.nextOrNull() ?: break
+            if (element.locator.href != href) {
+                crossedIntoNextResource = true
+                break
+            }
+            elements.add(element)
+            val progression = element.locator.locations.progression
+            progressions.add(progression)
+            if (progression != null && progression > target) break
+        }
+        val anchor = progressionAnchor(progressions, target, crossedIntoNextResource)
+        if (anchor.index < 0) return
+        // Re-read an element that was already consumed while scanning: the block just
+        // past the target, or the first block of the next resource when the target is
+        // at the end of this one. The anchor itself needs no step back.
+        if (anchor.stepBack && publicationIterator.hasPrevious()) {
+            publicationIterator.previous()
+        }
+        buffer = elements[anchor.index].toSentencesTokenized()
+        cursor = if (buffer.isEmpty()) -1 else 0
     }
 
     /** Advances to the next sentence, or null at the end of the publication. */
@@ -113,3 +182,31 @@ internal class PublicationSentenceIterator(
     private fun Content.Element.toSentencesTokenized(): List<Sentence> =
         tokenize().flatMap { it.toSentences() }
 }
+
+/** Element to anchor a progression seek at, and whether the next element is already consumed. */
+internal data class ProgressionAnchor(val index: Int, val stepBack: Boolean)
+
+/**
+ * Chooses the element that a narration seek at `progression` [target] anchors at.
+ *
+ * [progressions] are the resource-ordered progressions of the scanned elements. The
+ * anchor is the last element at or before [target]; when the first element is
+ * already past the target it is used as-is. [stepBack] is true when the element just
+ * past the anchor (or the first element of the next resource, when
+ * [crossedIntoNextResource]) was consumed while scanning and must be read again.
+ */
+internal fun progressionAnchor(
+    progressions: List<Double?>,
+    target: Double,
+    crossedIntoNextResource: Boolean = false,
+): ProgressionAnchor {
+    if (progressions.isEmpty()) return ProgressionAnchor(index = -1, stepBack = false)
+    val overshoot = progressions.indexOfFirst { it != null && it > target }
+    val index = when {
+        overshoot < 0 -> progressions.lastIndex
+        overshoot == 0 -> 0
+        else -> overshoot - 1
+    }
+    return ProgressionAnchor(index = index, stepBack = crossedIntoNextResource || overshoot > 0)
+}
+
