@@ -21,9 +21,20 @@ if (-not [string]::IsNullOrWhiteSpace($DeviceSerial)) {
 }
 
 function Invoke-Adb([string[]]$Arguments) {
-    $output = & $adb @adbPrefix @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "adb $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
+    # adb writes transfer progress ("1 file pushed ...") to stderr; under
+    # $ErrorActionPreference='Stop' Windows PowerShell turns that into a
+    # NativeCommandError even on success, so relax it for the call and rely on
+    # the exit code instead.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $adb @adbPrefix @Arguments 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if ($code -ne 0) {
+        throw "adb $($Arguments -join ' ') failed with exit code $code.`n$($output -join "`n")"
     }
     return $output
 }

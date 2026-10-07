@@ -1,6 +1,10 @@
-# Development model files generated from geneing/PocketTTS-LiteRT commit 3f51d5e5862c35b8dc3e32e65cd4a750ee7b7f65.
+# Development model files generated from geneing/PocketTTS-LiteRT, pinned to the
+# vendored snapshot in third_party/PocketTTS-LiteRT (upstream commit be0e64c plus
+# the Tensor G5 FlowLM NPU working-tree changes).
+# The AOT FlowLM graph is the Tensor G5 default; the CPU int8 graph
+# (pt_flowlm_fused_dyn8_all.tflite) is no longer provisioned.
 # Used by the host provisioning script to verify the source pack and each ADB transfer.
-895cd59e4c8256000e9bd3855e6b6f87f00e3ad9a2b093cbe70df018370a10f9  pt_flowlm_fused_dyn8_all.tflite
+183a71a2475e6fb68ab626788f8f2189a85d9fb661bcca8c8637e19ce2906d12  pt_flowlm_fused_st16_ffn12_contiguous_no_truncation_g5.tflite
 5e4b277385bb7a2e5c7475d7421479a4b77431d6aa0ded535ae8c067c6edfa38  pt_mimi_dec_tx_fp16.tflite
 447cb6e46fb41cb4b8d67f711e10a786034933cea7d0415d3f6601b22090fcf7  pt_mimi_dec_tx_fp16_g5.tflite
 ea7bd858b8e2841b30be7599e4bfedce7a751d23a9e1946d14101b0440de4e7e  pt_mimi_deconly_fp16.tflite

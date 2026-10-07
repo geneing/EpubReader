@@ -21,10 +21,22 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        // Only arm64-v8a has a Google Tensor NPU dispatch shim; keep the native
+        // build (pockettts_kv_slice) and packaging to that ABI.
+        ndk { abiFilters += setOf("arm64-v8a") }
     }
 
     buildFeatures {
         compose = true
+    }
+
+    packaging {
+        jniLibs {
+            // The Tensor dispatch shim is dlopen'ed by absolute path out of the
+            // installed package's lib/arm64/ directory, so it has to be extracted
+            // at install time rather than left compressed in the APK.
+            useLegacyPackaging = true
+        }
     }
 
     compileOptions {
