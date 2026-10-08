@@ -468,7 +468,7 @@ class ReaderActivity : FragmentActivity() {
                   if (!style) {
                     style = document.createElement('style');
                     style.id = 'epubreader-scroll-fix';
-                    style.textContent = 'html, body { touch-action: pan-y !important; overflow-x: hidden !important; max-height: none !important; }';
+                    style.textContent = 'html, body { touch-action: pan-y !important; overflow-x: hidden !important; max-height: none !important; } body { padding-top: 32px !important; padding-bottom: 32px !important; }';
                     (document.head || document.documentElement).appendChild(style);
                   }
                   root.style.setProperty('overflow-y', 'auto', 'important');
@@ -553,12 +553,13 @@ class ReaderActivity : FragmentActivity() {
             if (event.type == DragEvent.Type.Start) {
                 stopAutoFollowing()
             }
-            if (
-                event.type == DragEvent.Type.End &&
-                event.offset.y < -40f &&
-                kotlin.math.abs(event.offset.y) > kotlin.math.abs(event.offset.x) * 1.25f
-            ) {
-                advanceToNextChapterAtScrollEnd()
+            if (event.type == DragEvent.Type.End) {
+                val vertical = kotlin.math.abs(event.offset.y) >
+                    kotlin.math.abs(event.offset.x) * 1.25f
+                when {
+                    vertical && event.offset.y < -40f -> advanceToNextChapterAtScrollEnd()
+                    vertical && event.offset.y > 40f -> advanceToPreviousChapterAtScrollStart()
+                }
             }
             return false
         }
@@ -589,6 +590,35 @@ class ReaderActivity : FragmentActivity() {
             if (currentIndex < 0) return@launch
             val nextLink = openedPublication.readingOrder.getOrNull(currentIndex + 1) ?: return@launch
             openedPublication.locatorFromLink(nextLink)?.let { fragment.go(it, animated = false) }
+        }
+    }
+
+    /**
+     * Readium gives every chapter its own scroll view, so scrolling up at the top of
+     * one dead-ends. Move to the previous reading-order resource, positioned at its
+     * end, to continue scrolling upward into the previous chapter.
+     */
+    private fun advanceToPreviousChapterAtScrollStart() {
+        val fragment = currentNavigatorFragment() as? EpubNavigatorFragment ?: return
+        val current = fragment.currentLocator.value
+        lifecycleScope.launch {
+            delay(120)
+            val atStart = runCatching {
+                fragment.evaluateJavascript(
+                    """(function(){var e=document.scrollingElement||document.documentElement;return e.scrollTop<=12;})()""",
+                )?.trim()?.trim('"') == "true"
+            }.getOrDefault(false)
+            if (!atStart) return@launch
+            val openedPublication = publication ?: return@launch
+            val currentIndex = openedPublication.readingOrder.indexOfFirst {
+                it.href.toString().substringBefore('#') == current.href.toString().substringBefore('#')
+            }
+            if (currentIndex <= 0) return@launch
+            val previousLink = openedPublication.readingOrder[currentIndex - 1]
+            val previousLocator = openedPublication.locatorFromLink(previousLink)
+                ?.copyWithLocations(progression = 1.0)
+                ?: return@launch
+            fragment.go(previousLocator, animated = false)
         }
     }
 
