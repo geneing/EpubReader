@@ -28,9 +28,9 @@
 - Scan registered folders on user request (and optionally offer a controlled refresh), track folder permission state, and recover from revoked grants, removed folders, provider outages, and moved/deleted files.
 - Use an Android media session and media-style notification for ongoing playback; support background playback, headset/Bluetooth controls, audio focus, and Android foreground-service requirements.
 - Make model download/install a user-visible, cancellable operation. Verify Pocket model manifests/checksums, keep model artifacts outside the APK, and provide useful states for absent/corrupt/incompatible files.
-- For development/device tests, prefer uploading the pinned Pocket model pack from the host to the connected Pixel 10 with ADB. Cache verified model files in the app-specific model directory across launches; never commit weights or push them into source-controlled folders.
+- For development/device tests, prefer uploading the pinned Pocket model pack from the host to the connected Pixel 11 with ADB. Cache verified model files in the app-specific model directory across launches; never commit weights or push them into source-controlled folders.
 - Do not commit copyrighted sample books, model weights, generated audio, or voice assets. Preserve attribution and license notices for Readium, LiteRT, Pocket TTS, voices, and bundled third-party code.
-- Use an Android Virtual Device (AVD) on the host as the primary development and regression environment. Exercise Android System TTS in the AVD, with its audio routed to host speakers. Use a physical Pixel 10 only for on-device Pocket TTS/LiteRT inference and performance checks. Windows host speech APIs are not Android TTS engines.
+- Use an Android Virtual Device (AVD) on the host as the primary development and regression environment. Exercise Android System TTS in the AVD, with its audio routed to host speakers. Use a physical Pixel 11 only for on-device Pocket TTS/LiteRT inference and performance checks. Windows host speech APIs are not Android TTS engines.
 - Prefer narrow, meaningful tests for SAF grants/folder scanning, parsing, progress persistence, speech-provider behavior, and playback lifecycle. Add/adjust tests when changing these paths.
 
 ## Git workflow
@@ -42,7 +42,7 @@
 
 ## Windows build environment
 
-The expected development host is Windows. Run Gradle from PowerShell using the Windows wrapper, and set the Android SDK path before Gradle. Run the app and most manual/instrumented checks on a host AVD; reserve the Pixel 10 for Pocket TTS hardware testing:
+The expected development host is Windows. Run Gradle from PowerShell using the Windows wrapper, and set the Android SDK path before Gradle. Run the app and most manual/instrumented checks on a host AVD; reserve the Pixel 11 for Pocket TTS hardware testing:
 
 ```powershell
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
@@ -51,7 +51,7 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 
 Use the wrapper checked into the repository. Do not run Gradle from WSL. WSL is available for POSIX-only scripts (for example, Pocket TTS model conversion scripts); the Windows workspace is mounted under `/mnt/<drive>/...`.
 
-For Pocket model testing, use the repository's development provisioning task/script (to be implemented) or `adb push` to place host-generated/pinned model files in the app-specific model cache on the Pixel 10. Verify hashes and preserve that cache between app launches; rebuilding/reinstalling should not require uploading the weights again unless the app was uninstalled, its data cleared, or the model version changed.
+For Pocket model testing, use `scripts/provision-pocket-models.ps1` (or `adb push`) to place host-generated/pinned model files in the app-specific model cache on the Pixel 11. Verify hashes and preserve that cache between app launches; rebuilding/reinstalling should not require uploading the weights again unless the app was uninstalled, its data cleared, or the model version changed.
 
 ## Documentation expectations
 

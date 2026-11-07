@@ -7,7 +7,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - **Stage:** Initial Android implementation.
 - **Active branch:** `feature/tts-text-normalizer` (text normalization for Pocket narration; device verification pending).
 - **Current milestone:** Polish the EPUB reading and narration experience: continuous vertical scrolling that fills the window, dynamic Pocket voice selection and text size, double-tap-to-read, narration auto-follow, and background notification controls.
-- **Device strategy:** Host AVD is the default for UI, SAF, lifecycle, and Android System TTS. Pixel 10 is reserved for real Pocket TTS/LiteRT inference and performance.
+- **Device strategy:** Host AVD is the default for UI, SAF, lifecycle, and Android System TTS. Pixel 11 (Tensor G6) is reserved for real Pocket TTS/LiteRT inference and performance.
 
 ## Completed
 
@@ -15,7 +15,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - [x] Created product design, technical design, contributor guidance, and project README.
 - [x] Chose Android 16+ minimum, SAF folder-based book access without copying, and no scanned-PDF OCR in MVP.
 - [x] Specified a traditional inset-safe UI that handles Android 16 enforced edge-to-edge behavior and camera cutouts.
-- [x] Set AVD-first development/testing, Android System TTS in AVD, and Pixel 10-only physical Pocket inference checks.
+- [x] Set AVD-first development/testing, Android System TTS in AVD, and Pixel-only physical Pocket inference checks.
 - [x] Specified host-to-Pixel model provisioning via ADB and caching verified model weights on-device.
 - [x] Added long-term TODO, progress tracking, and learnings-log requirements/files.
 - [x] Created a runnable single-module Compose app with Kotlin 2.4.20, AGP 9.4.0, Gradle 9.7.1, API 36 min/target, and API 37 compile SDK required by latest stable Compose libraries.
@@ -52,6 +52,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - [x] Added an app-owned TTS text-normalization layer for Pocket narration (`playback/normalization`): an ordered, pure `TextNormalizationRule` pipeline, English-gated by `TextNormalizer.forLanguage`. Rules cover abbreviations (honorifics/titles, Latin forms, months/days, organisations; context-aware `St.` → Saint/Street), numerals (comma-grouped thousands, decimals, four-digit years, negatives), ordinals, decades, percentages, currency, dates (month-name and numeric), times, ranges, fractions, units, symbols, phone/version digit groups, and a non-prose (URL/email/code) scanner, plus an acronym/lexicon rule. Normalization runs per sentence after segmentation, so locators and highlights still come from the source text. 66 host-JVM tests plus the extensive roadmap in `docs/TEXT_NORMALIZATION.md`; hard cases tracked in `docs/TEXT_NORMALIZATION_ISSUES.md`.
 - [x] Extended the normalizer to Android System TTS with `NormalizingTtsEngineProvider`, a Readium `TtsEngineProvider` decorator that rewrites each utterance in `TtsEngine.speak` before delegating to `AndroidTtsEngine`; `ReadiumNarrationController` normalizes `location.utterance` the same way so highlight ranges stay aligned. Covered by `NormalizingTtsEngineProviderTest`. Build, unit tests (69), and lint pass; device verification pending.
 - [x] Updated the vendored Pocket TTS LiteRT runtime from `2dba838` to upstream `main` `be0e64c` plus its FlowLM NPU working-tree changes, so FlowLM runs on the Pixel 10 Tensor G5 NPU (AOT `pt_flowlm_fused_st16_ffn12_contiguous_no_truncation_g5.tflite`, position-major persistent K/V cache, HIGH_PERFORMANCE). Added the `pockettts_kv_slice` CMake native library, the fetched `libLiteRtDispatch_GoogleTensor.so` dispatch shim (arm64-v8a only) with legacy native-library extraction, and an ABI-filtered packaging. Provisioned the new graph (SHA-256 verified source and device) and removed the superseded CPU graph `pt_flowlm_fused_dyn8_all.tflite`; confirmed on-device narration runs with `lm:NPU dectx:NPU dec:GPU` and `G5 HIGH PERFORMANCE active`.
+- [x] Retargeted the vendored Pocket TTS LiteRT runtime to Pixel 11 / Tensor G6 (upstream `main` `5fa2587`). Moved to LiteRT 2.3.2 with the split `litert`, `litert-gpu`, and `litert-npu-runtime-google-tensor` AARs (the shim and JIT compiler plugin now come from Maven), removed the old fetched-dispatch/ABI workaround, and updated the model manifest/checksums. The Pixel 11 default is CPU int8 FlowLM + CPU dec_tx + GPU SEANet; the Tensor NPU is opt-in through `force_npu.txt` and JIT-compiles `pt_flowlm_fused_dyn8_all_contiguous_jit.tflite`. Built, unit tests pass, installed on the connected Pixel 11, and provisioned + SHA-256 verified 18 model files. Added `PocketTtsDeviceSmokeTest` and verified headless synthesis on the Pixel 11: `engine lm:CPU dectx:CPU dec:GPU`, 51840 samples (2.16 s at 24 kHz) in 1494 ms. End-to-end Readium narration/audio playback still needs a device-unlocked check.
 
 ## Immediate next steps
 
@@ -59,12 +60,12 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 2. Verify persisted locator restoration and reading-stop history across process recreation.
 3. Verify System TTS interruption/cancellation, Bluetooth headset pause/resume and disconnect/reconnect, and audio-focus behavior on an API 36 AVD and representative Bluetooth devices.
 4. Audit PdfiumAndroid/JitPack licensing and native ABI/16 KB page-size support; validate more representative PDFs before claiming broader support.
-5. Confirm audible Pocket TTS narration from the EPUB on Pixel 10; test the sentence look-ahead buffer and jittered pauses, per-book voice selection, pause/stop/cancellation, seek/skip, the reader highlight tracking the playback head, offline behavior, first-audio latency, and memory use.
+5. Confirm audible Pocket TTS narration from the EPUB on Pixel 11; test the sentence look-ahead buffer and jittered pauses, per-book voice selection, pause/stop/cancellation, seek/skip, the reader highlight tracking the playback head, offline behavior, first-audio latency, and memory use.
 
 ## Blockers / pending verification
 
 - Readium PDF extraction/TTS locator mapping must be proven with representative PDFs.
-- Readium 3.4.0 and the Pocket TTS LiteRT Tensor G5 NPU snapshot are pinned (see `third_party/PocketTTS-LiteRT/UPSTREAM.md`). Pocket service startup, model provisioning, and audible end-to-end narration on the NPU are confirmed on Pixel 10; performance/cancellation and memory checks are still pending, and the AOT FlowLM graph is not yet in the release manifest for cold installs.
+- Readium 3.4.0 and the Pocket TTS LiteRT Pixel 11 / Tensor G6 snapshot are pinned (see `third_party/PocketTTS-LiteRT/UPSTREAM.md`). The app is installed on the Pixel 11 with its service registered and 18 model files provisioned; audible end-to-end synthesis, performance/cancellation, and memory checks are still pending, and the upstream `models-2026.09` release does not yet serve a manifest for cold installs.
 - SAF folder accessibility depends on Android's picker and the document provider; the basic local-folder grant and scan flow worked on the API 37 AVD. Repeat on API 36 and document provider constraints.
 - Readium 3.3.0 opened the supplied EPUB fixtures directly through persisted `content://` URIs on the API 37 AVD. The bug-fix checkpoint adds serialized Readium locator restoration and per-book reading-stop history; validate them on an API 36 AVD and after process recreation.
 - The supplied searchable PDF renders and resumes at the saved percentage with Readium's PDFium adapter. PDF TTS text extraction and synchronized highlighting remain unimplemented; scanned-PDF OCR is out of scope.

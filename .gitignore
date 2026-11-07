@@ -6,7 +6,7 @@ build/
 # Local configuration file (sdk path, etc)
 local.properties
 
-# Fetched NPU dispatch runtime (scripts/fetch-google-tensor-dispatch.ps1)
+# Locally added native runtime libraries (Maven supplies the NPU runtime)
 **/jniLibs/**/*.so
 
 # Local tooling artifacts

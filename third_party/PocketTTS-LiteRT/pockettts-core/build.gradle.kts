@@ -13,7 +13,7 @@ extensions.configure<com.android.build.gradle.LibraryExtension> {
     }
 
     defaultConfig {
-        // 31+ because the Tensor G5 NPU dispatch runtime requires it.
+        // 31+ because the Google Tensor NPU dispatch runtime requires it.
         minSdk = 31
         consumerProguardFiles("consumer-rules.pro")
         externalNativeBuild {
@@ -55,9 +55,13 @@ extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtensi
 
 
 dependencies {
-    // Exposed transitively: every consumer needs the same 2.2.0 runtime the
-    // Google Tensor dispatch shim and AOT compiler are pinned to.
-    api(libs.litert.api)
+    // Exposed transitively: every consumer needs the same 2.3.x runtime the
+    // Google Tensor dispatch shim is pinned to. 2.3.0 split the GPU and NPU
+    // runtimes out of the core AAR; 2.3.2 is the first dispatch shim that
+    // initializes on Pixel 11 / Tensor G6. `litert` pulls in `litert-api`.
+    api(libs.litert.runtime)
+    api(libs.litert.gpu)
+    api(libs.litert.npu.runtime.google.tensor)
 
     testImplementation("junit:junit:4.13.2")
 }

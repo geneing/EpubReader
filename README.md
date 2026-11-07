@@ -11,7 +11,7 @@ An Android EPUB and PDF reader in active development, with text-to-speech narrat
 - Jetpack Compose for application UI; Readium Kotlin Toolkit for publication parsing/navigation.
 - Traditional, inset-safe screen layout that works around Android status bars, navigation bars, camera cutouts, and IME across phones; Android 16 edge-to-edge platform behavior is handled without placing important content under system areas.
 
-Development is centered on host AVDs using Android System TTS. A physical Pixel 10 is reserved for Pocket TTS/LiteRT inference testing; development model weights are provisioned from the host and cached on the device.
+Development is centered on host AVDs using Android System TTS. A physical Pixel 11 is reserved for Pocket TTS/LiteRT inference testing; development model weights are provisioned from the host and cached on the device.
 
 ## Project documents
 

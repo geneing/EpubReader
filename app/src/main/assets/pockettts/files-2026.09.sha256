@@ -1,14 +1,15 @@
 # Development model files generated from geneing/PocketTTS-LiteRT, pinned to the
-# vendored snapshot in third_party/PocketTTS-LiteRT (upstream commit be0e64c plus
-# the Tensor G5 FlowLM NPU working-tree changes).
-# The AOT FlowLM graph is the Tensor G5 default; the CPU int8 graph
-# (pt_flowlm_fused_dyn8_all.tflite) is no longer provisioned.
+# vendored snapshot in third_party/PocketTTS-LiteRT (upstream 5fa2587, Pixel 11 /
+# Tensor G6). The CPU int8 FlowLM graph is the Pixel 11 default; the position-major
+# JIT graph is optional and only used when force_npu.txt asks for the NPU.
 # Used by the host provisioning script to verify the source pack and each ADB transfer.
-183a71a2475e6fb68ab626788f8f2189a85d9fb661bcca8c8637e19ce2906d12  pt_flowlm_fused_st16_ffn12_contiguous_no_truncation_g5.tflite
+895cd59e4c8256000e9bd3855e6b6f87f00e3ad9a2b093cbe70df018370a10f9  pt_flowlm_fused_dyn8_all.tflite
+0859169d1db2607512cca9f8a3591afdc0d5bbe1b6b3eb475c109f44d2f6abca  pt_flowlm_fused_dyn8_all_contiguous_jit.tflite
 5e4b277385bb7a2e5c7475d7421479a4b77431d6aa0ded535ae8c067c6edfa38  pt_mimi_dec_tx_fp16.tflite
-447cb6e46fb41cb4b8d67f711e10a786034933cea7d0415d3f6601b22090fcf7  pt_mimi_dec_tx_fp16_g5.tflite
 ea7bd858b8e2841b30be7599e4bfedce7a751d23a9e1946d14101b0440de4e7e  pt_mimi_deconly_fp16.tflite
 77e5d5051de9fdcbda5e4fb286f76a69f94d9ad06e93a8070928a29e8c231a84  pt_mimi_deconly_w512_fp16.tflite
+2f90bb1d574f39c8e78f448f6fa0359cf40435850697390f03bec4588e6744c6  pt_mimi_deconly_w1024_fp16.tflite
+8c03615c7e788f8fe6a8e6463db819cf52269127886f72910db316f59b9ed0a7  pt_mimi_deconly_w2048_fp16.tflite
 82c06e512863fc5b45b14e55e55a911fa2bede6df50e2a7472206af74fc0ac78  pt_embed_f16.bin
 5f4738bbdba5b4c75ab64c5dfae1e37b884b5e1c7f93c0a1d487dcd5250f17fb  pt_input_linear_f32.bin
 e07dd05266cdcc846141168dc37660abfb9baa3c4e5f8d1d22c8ab3810f0e40a  pt_bos_input_f32.bin
