@@ -49,11 +49,15 @@ class LibraryRepository(context: Context) {
         )
     }
 
-    suspend fun addDocument(uri: Uri) {
-        appContext.contentResolver.takePersistableUriPermission(
-            uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION,
-        )
+    suspend fun addDocument(uri: Uri, persistPermission: Boolean = true) {
+        if (persistPermission) {
+            runCatching {
+                appContext.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+        }
         val document = DocumentFile.fromSingleUri(appContext, uri)
             ?: error("Android couldn't open that file. Try selecting it again.")
         val displayName = document.name ?: uri.lastPathSegment ?: "Book"

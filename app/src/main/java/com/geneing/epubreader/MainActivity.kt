@@ -3,8 +3,10 @@ package com.geneing.epubreader
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -34,7 +36,51 @@ class MainActivity : ComponentActivity() {
         setContent {
             EpubReaderApp(viewModel = libraryViewModel)
         }
-        if (savedInstanceState == null) openLastReaderIfPlaying()
+        if (savedInstanceState == null && !openIncomingBook(intent)) openLastReaderIfPlaying()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openIncomingBook(intent)
+    }
+
+    /** Adds a shared/opened file to the library and immediately opens it in the reader. */
+    private fun openIncomingBook(incoming: Intent): Boolean {
+        val uri = when (incoming.action) {
+            Intent.ACTION_SEND -> incoming.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                ?: incoming.clipData?.getItemAt(0)?.uri
+            Intent.ACTION_VIEW -> incoming.data
+            else -> null
+        } ?: return false
+
+        val canPersistPermission = incoming.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0
+        lifecycleScope.launch {
+            try {
+                val book = withContext(Dispatchers.IO) {
+                    libraryRepository.addDocument(uri, persistPermission = canPersistPermission)
+                    libraryRepository.findBook(uri.toString())
+                } ?: error("EpubReader couldn't add this file to your library.")
+                startActivity(
+                    Intent(this@MainActivity, ReaderActivity::class.java).apply {
+                        putExtra(ReaderActivity.EXTRA_BOOK_URI, book.uri)
+                        putExtra(ReaderActivity.EXTRA_BOOK_NAME, book.displayName)
+                        putExtra(ReaderActivity.EXTRA_BOOK_MIME, book.mimeType)
+                        putExtra(ReaderActivity.EXTRA_PROGRESS_PERCENT, book.progressPercent)
+                        putExtra(ReaderActivity.EXTRA_INITIAL_LOCATOR_JSON, book.lastLocatorJson)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        clipData = android.content.ClipData.newRawUri(book.displayName, uri)
+                    },
+                )
+            } catch (error: Exception) {
+                Toast.makeText(
+                    this@MainActivity,
+                    error.message ?: "EpubReader couldn't open this book.",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+        return true
     }
 
     /**

@@ -38,6 +38,7 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.AssistChip
@@ -59,6 +60,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -129,6 +131,8 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
     val drawerState = androidx.compose.material3.rememberDrawerState(DrawerValue.Closed)
     var destination by rememberSaveable { mutableStateOf(LibraryDestination.RECENT) }
     var selectedFolderUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var allFilesSearchOpen by rememberSaveable { mutableStateOf(false) }
+    var allFilesSearchQuery by rememberSaveable { mutableStateOf("") }
 
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
@@ -222,6 +226,14 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                             }
                         },
                         actions = {
+                            if (destination == LibraryDestination.ALL_FILES) {
+                                IconButton(onClick = {
+                                    allFilesSearchOpen = !allFilesSearchOpen
+                                    if (!allFilesSearchOpen) allFilesSearchQuery = ""
+                                }) {
+                                    Icon(Icons.Outlined.Search, contentDescription = "Search books")
+                                }
+                            }
                             if (destination == LibraryDestination.RECENT || destination == LibraryDestination.ALL_FILES || destination == LibraryDestination.FOLDER_CONTENTS) {
                                 IconButton(onClick = { bookPicker.launch(arrayOf("*/*")) }) {
                                     Icon(Icons.Outlined.Add, contentDescription = "Add a book file")
@@ -269,11 +281,22 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                     LibraryDestination.ALL_FILES -> LibraryContent(
                         title = "All files",
                         description = "Your EPUB and PDF books, wherever they are stored.",
-                        books = state.books.sortedWith(compareByDescending<BookEntity> { it.lastOpenedAt }.thenBy { it.displayName.lowercase() }),
+                        books = state.books
+                            .filter { book ->
+                                val terms = allFilesSearchQuery.trim().split(Regex("\\s+")).filter(String::isNotBlank)
+                                terms.all { term -> book.displayName.contains(term, ignoreCase = true) }
+                            }
+                            .sortedWith(compareByDescending<BookEntity> { it.lastOpenedAt }.thenBy { it.displayName.lowercase() }),
                         totalBooks = state.books.size,
-                        emptyTitle = "Your bookshelf is ready",
-                        emptyDescription = "Add a folder or choose a book file to get started.",
+                        emptyTitle = if (allFilesSearchQuery.isBlank()) "Your bookshelf is ready" else "No books found",
+                        emptyDescription = if (allFilesSearchQuery.isBlank()) {
+                            "Add a folder or choose a book file to get started."
+                        } else {
+                            "Try a different book name or search word."
+                        },
                         innerPadding = innerPadding,
+                        searchQuery = allFilesSearchQuery.takeIf { allFilesSearchOpen },
+                        onSearchQueryChange = { allFilesSearchQuery = it },
                         onAddFolder = { folderPicker.launch(null) },
                         onAddFile = { bookPicker.launch(arrayOf("*/*")) },
                         onOpenBook = { book ->
@@ -398,6 +421,8 @@ private fun LibraryContent(
     emptyTitle: String,
     emptyDescription: String,
     innerPadding: androidx.compose.foundation.layout.PaddingValues,
+    searchQuery: String? = null,
+    onSearchQueryChange: (String) -> Unit = {},
     onAddFolder: (() -> Unit)?,
     onAddFile: (() -> Unit)?,
     onOpenBook: (BookEntity) -> Unit,
@@ -430,6 +455,18 @@ private fun LibraryContent(
                     description = description,
                     trailing = "$totalBooks ${if (totalBooks == 1) "book" else "books"} in library",
                 )
+            }
+            if (searchQuery != null) {
+                item {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = onSearchQueryChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Search book names") },
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    )
+                }
             }
             if (books.isEmpty()) {
                 item {
