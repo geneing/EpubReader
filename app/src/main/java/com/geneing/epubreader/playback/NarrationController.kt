@@ -45,6 +45,10 @@ internal interface NarrationController {
     fun skipToNextUtterance()
     fun skipToPreviousUtterance()
     fun hasNextUtterance(): Boolean
+
+    /** Applies a new speech rate without restarting the session. */
+    fun setRate(rate: Float)
+
     fun asMedia3Player(): Player
     fun close()
 }
@@ -52,7 +56,12 @@ internal interface NarrationController {
 /** Adapts Readium's TTS navigator (Android System TTS) to [NarrationController]. */
 @OptIn(ExperimentalReadiumApi::class)
 internal class ReadiumNarrationController(
-    private val navigator: TtsNavigator<*, *, *, *>,
+    private val navigator: TtsNavigator<
+        org.readium.navigator.media.tts.android.AndroidTtsSettings,
+        org.readium.navigator.media.tts.android.AndroidTtsPreferences,
+        org.readium.navigator.media.tts.android.AndroidTtsEngine.Error,
+        org.readium.navigator.media.tts.android.AndroidTtsEngine.Voice,
+        >,
 ) : NarrationController {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -97,6 +106,16 @@ internal class ReadiumNarrationController(
     override fun skipToPreviousUtterance() = navigator.skipToPreviousUtterance()
 
     override fun hasNextUtterance(): Boolean = navigator.hasNextUtterance()
+
+    override fun setRate(rate: Float) {
+        runCatching {
+            navigator.submitPreferences(
+                org.readium.navigator.media.tts.android.AndroidTtsPreferences(
+                    speed = rate.toDouble(),
+                ),
+            )
+        }
+    }
 
     override fun asMedia3Player(): Player = navigator.asMedia3Player()
 

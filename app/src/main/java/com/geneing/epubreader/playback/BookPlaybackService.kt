@@ -52,10 +52,12 @@ import kotlinx.coroutines.Dispatchers
 import org.readium.navigator.media.common.DefaultMediaMetadataProvider
 import org.readium.navigator.media.tts.AndroidTtsNavigatorFactory
 import org.readium.navigator.media.tts.TtsNavigator
+import org.readium.navigator.media.tts.android.AndroidTtsEngine
 import org.readium.navigator.media.tts.android.AndroidTtsEngineProvider
 import org.readium.navigator.media.tts.android.AndroidTtsPreferences
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
+import org.readium.r2.shared.util.Language
 import org.json.JSONObject
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.coverFitting
@@ -88,6 +90,7 @@ class BookPlaybackService : MediaSessionService() {
     private var disconnectedOutputWasBluetooth = false
     private var lastKnownBluetoothOutputConnected = false
     private var hasPlaybackNotification = false
+    private var restartingNarration = false
 
     private val skipBackCommand = SessionCommand(PlaybackServiceCommands.ACTION_SKIP_BACK, Bundle.EMPTY)
     private val skipForwardCommand = SessionCommand(PlaybackServiceCommands.ACTION_SKIP_FORWARD, Bundle.EMPTY)
@@ -263,6 +266,21 @@ class BookPlaybackService : MediaSessionService() {
                     Locator::class.java,
                 )?.let { ttsNavigator?.go(it) }
             }
+            PlaybackServiceCommands.ACTION_CHANGE_VOICE -> {
+                val engine = com.geneing.epubreader.data.SpeechEngine.fromStorageKey(
+                    intent.getStringExtra(PlaybackServiceCommands.EXTRA_VOICE_ENGINE),
+                )
+                val voice = intent.getStringExtra(PlaybackServiceCommands.EXTRA_VOICE_ID)
+                if (!voice.isNullOrBlank()) changeVoice(engine, voice)
+            }
+            PlaybackServiceCommands.ACTION_SET_RATE -> {
+                val rate = intent.getFloatExtra(
+                    PlaybackServiceCommands.EXTRA_SPEECH_RATE,
+                    AppPreferences.speechRate(applicationContext),
+                )
+                AppPreferences.setSpeechRate(applicationContext, rate)
+                ttsNavigator?.setRate(AppPreferences.speechRate(applicationContext))
+            }
         }
         return START_NOT_STICKY
     }
@@ -430,11 +448,18 @@ class BookPlaybackService : MediaSessionService() {
                 val metadataProvider = DefaultMediaMetadataProvider(title = title, author = author)
                 val listener = object : TtsNavigator.Listener {
                     override fun onStopRequested() {
-                        stopPlayback()
+                        // Closing a navigator to swap voices also tears down its
+                        // session; that must not stop the whole playback service.
+                        if (!restartingNarration) stopPlayback()
                     }
                 }
                 val engineProvider = NormalizingTtsEngineProvider(
-                    AndroidTtsEngineProvider(application),
+                    AndroidTtsEngineProvider(
+                        application,
+                        voiceSelector = SystemVoiceSelector(
+                            AppPreferences.systemTtsVoice(applicationContext),
+                        ),
+                    ),
                 )
                 val factory = AndroidTtsNavigatorFactory(
                     application,
@@ -467,6 +492,77 @@ class BookPlaybackService : MediaSessionService() {
                 )
             }
         }
+    }
+
+    /**
+     * Restarts the narration controller with the newly selected engine/voice,
+     * keeping the current sentence and play state. The publication stays open,
+     * so the reader page and the media session are not reset.
+     */
+    private fun changeVoice(engine: com.geneing.epubreader.data.SpeechEngine, voice: String) {
+        val uri = activeBookUri ?: return
+        val navigator = ttsNavigator ?: return
+        val locator = navigator.location.value.utteranceLocator
+        val wasPlaying = navigator.playback.value.playWhenReady
+        lifecycleScope.launch {
+            try {
+                if (engine == com.geneing.epubreader.data.SpeechEngine.POCKET &&
+                    !withContext(Dispatchers.IO) { pocketTtsModelManager.status().installed }
+                ) {
+                    PlaybackStateStore.update(
+                        PlaybackStateStore.state.value.copy(
+                            errorMessage = "Pocket TTS models are not installed. Install them in Settings first.",
+                        ),
+                    )
+                    return@launch
+                }
+                recreateNarration(uri, locator, wasPlaying)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                PlaybackStateStore.update(
+                    PlaybackStateStore.state.value.copy(
+                        errorMessage = error.message ?: "Couldn't switch the narration voice.",
+                    ),
+                )
+            }
+        }
+    }
+
+    private suspend fun recreateNarration(
+        uriString: String,
+        locator: Locator?,
+        playWhenReady: Boolean,
+    ) {
+        val openedPublication = publication ?: return
+        val state = PlaybackStateStore.state.value
+        val title = state.title.ifBlank { foregroundBookTitle }
+        val author = state.author
+        val coverPath = state.coverPath
+        playbackObserver?.cancel()
+        locationObserver?.cancel()
+        playbackObserver = null
+        locationObserver = null
+        restartingNarration = true
+        ttsNavigator?.close()
+        ttsNavigator = null
+        val navigator = try {
+            createNarration(
+                publication = openedPublication,
+                title = title,
+                author = author,
+                initialLocator = locator,
+                mediaId = uriString,
+            )
+        } finally {
+            restartingNarration = false
+        }
+        ttsNavigator = navigator
+        mediaSession?.setPlayer(ProgressPlayer(navigator.asMedia3Player()))
+        observePlayback(navigator, uriString, title, author, coverPath)
+        explicitUserPause = !playWhenReady
+        pausedForHeadsetDisconnect = false
+        if (playWhenReady) navigator.play() else navigator.pause()
     }
 
     private fun observePlayback(
@@ -809,5 +905,44 @@ class BookPlaybackService : MediaSessionService() {
         private const val MAX_ALIGN_SKIPS = 25
         private const val LOCATION_CHANGE_TIMEOUT_MS = 4_000L
         private val WHITESPACE_REGEX = Regex("\\s+")
+    }
+}
+
+/**
+ * Resolves Readium's Android TTS engine to the voice the user picked, including
+ * voices the engine reports as network-backed or not installed yet. When the
+ * stored voice does not speak the utterance's language, the engine's own
+ * language default is used instead of reading English words with, say, a French
+ * voice model.
+ */
+@OptIn(ExperimentalReadiumApi::class)
+private class SystemVoiceSelector(
+    private val voiceName: String?,
+) : AndroidTtsEngine.VoiceSelector {
+
+    override fun voice(
+        language: Language?,
+        availableVoices: Set<AndroidTtsEngine.Voice>,
+    ): AndroidTtsEngine.Voice? {
+        val wanted = voiceName ?: return null
+        val sameLanguage = { candidate: AndroidTtsEngine.Voice ->
+            language == null || candidate.language.locale.language == language.locale.language
+        }
+        val chosen = availableVoices.firstOrNull { it.id.value == wanted && sameLanguage(it) }
+            ?: run {
+                // The engine may only publish the voice for another region of the
+                // same language (for example an en-GB voice on an en-US chapter).
+                val base = wanted.substringBeforeLast('-')
+                availableVoices.firstOrNull {
+                    it.id.value.substringBeforeLast('-') == base && sameLanguage(it)
+                }
+            }
+        android.util.Log.i(
+            "SystemVoiceSelector",
+            "wanted=$wanted language=$language available=${availableVoices.size} " +
+                "starIds=${availableVoices.count { it.id.value.contains("star") }} " +
+                "chosen=${chosen?.id ?: "engine default"}",
+        )
+        return chosen
     }
 }

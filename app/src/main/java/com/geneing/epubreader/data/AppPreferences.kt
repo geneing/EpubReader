@@ -41,6 +41,7 @@ object AppPreferences {
     private const val KEY_READER_FONT_SCALE = "reader_font_scale"
     private const val KEY_SPEECH_ENGINE = "speech_engine"
     private const val KEY_SPEECH_RATE = "speech_rate"
+    private const val KEY_SYSTEM_TTS_VOICE = "system_tts_voice"
     private const val KEY_POCKET_TTS_VOICE = "pocket_tts_voice"
     private const val KEY_PLAYBACK_GRACE_MINUTES = "playback_grace_minutes"
     private const val KEY_RESUME_ON_BLUETOOTH_RECONNECT = "resume_on_bluetooth_reconnect"
@@ -83,6 +84,17 @@ object AppPreferences {
 
     fun setSpeechRate(context: Context, rate: Float) {
         preferences(context).edit().putFloat(KEY_SPEECH_RATE, rate.coerceIn(MIN_SPEECH_RATE, MAX_SPEECH_RATE)).apply()
+    }
+
+    /** Android TTS voice name (for example `en-us-x-star04-local`), or null for the engine default. */
+    fun systemTtsVoice(context: Context): String? = preferences(context)
+        .getString(KEY_SYSTEM_TTS_VOICE, null)
+        ?.takeIf { it.isNotBlank() }
+
+    fun setSystemTtsVoice(context: Context, voice: String?) {
+        preferences(context).edit().apply {
+            if (voice.isNullOrBlank()) remove(KEY_SYSTEM_TTS_VOICE) else putString(KEY_SYSTEM_TTS_VOICE, voice)
+        }.apply()
     }
 
     fun pocketTtsVoice(context: Context): String = preferences(context)

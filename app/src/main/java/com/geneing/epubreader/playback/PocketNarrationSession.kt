@@ -56,7 +56,7 @@ internal class PocketNarrationSession private constructor(
     private val title: String,
     private val author: String?,
     private val voice: String,
-    private val rate: Float,
+    initialRate: Float,
     private val pitch: Float,
     private val mediaId: String,
 ) : NarrationController {
@@ -75,6 +75,9 @@ internal class PocketNarrationSession private constructor(
     private val iteratorMutex = Mutex()
     private val audioManager: AudioManager = appContext.getSystemService(AudioManager::class.java)
     private val random = Random()
+
+    @Volatile
+    private var rate: Float = initialRate
 
     private val lock = Any()
     private val pending = ArrayDeque<PublicationSentenceIterator.Sentence>()
@@ -172,6 +175,15 @@ internal class PocketNarrationSession private constructor(
     }
 
     override fun hasNextUtterance(): Boolean = !exhausted
+
+    override fun setRate(rate: Float) {
+        if (closed) return
+        this.rate = rate
+        // Buffered audio was rendered at the old rate, so restart from the
+        // sentence being spoken to hear the change immediately.
+        val current = synchronized(lock) { currentSentence }
+        if (current != null) startAt(current)
+    }
 
     override fun asMedia3Player(): Player {
         return sessionPlayer ?: SessionPlayer().also { sessionPlayer = it }
@@ -661,7 +673,7 @@ internal class PocketNarrationSession private constructor(
                 title = title,
                 author = author,
                 voice = voice,
-                rate = rate,
+                initialRate = rate,
                 pitch = pitch,
                 mediaId = mediaId,
             )
@@ -678,3 +690,4 @@ internal class PocketNarrationSession private constructor(
         }
     }
 }
+

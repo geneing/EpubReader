@@ -3,6 +3,7 @@ package com.geneing.epubreader.playback
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.geneing.epubreader.data.SpeechEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,11 +47,16 @@ object PlaybackServiceCommands {
     const val ACTION_SKIP_FORWARD = "com.geneing.epubreader.playback.SKIP_FORWARD"
     const val ACTION_STOP = "com.geneing.epubreader.playback.STOP"
     const val ACTION_SEEK_TO_LOCATOR = "com.geneing.epubreader.playback.SEEK_TO_LOCATOR"
+    const val ACTION_CHANGE_VOICE = "com.geneing.epubreader.playback.CHANGE_VOICE"
+    const val ACTION_SET_RATE = "com.geneing.epubreader.playback.SET_RATE"
     const val ACTION_REFRESH_SETTINGS = "com.geneing.epubreader.playback.REFRESH_SETTINGS"
     const val EXTRA_BOOK_URI = "playback_book_uri"
     const val EXTRA_INITIAL_LOCATOR = "playback_initial_locator"
     const val EXTRA_PROGRESS_PERCENT = "playback_progress_percent"
     const val EXTRA_ALIGN_TO_SELECTION = "playback_align_to_selection"
+    const val EXTRA_VOICE_ENGINE = "playback_voice_engine"
+    const val EXTRA_VOICE_ID = "playback_voice_id"
+    const val EXTRA_SPEECH_RATE = "playback_speech_rate"
 
     fun start(
         context: Context,
@@ -75,6 +81,27 @@ object PlaybackServiceCommands {
         context.startService(
             commandIntent(context, ACTION_SEEK_TO_LOCATOR)
                 .putExtra(EXTRA_INITIAL_LOCATOR, locator),
+        )
+    }
+
+    /**
+     * Switches the running narration to another voice. The engine and voice are
+     * persisted by the caller; the service restarts the controller at the
+     * current sentence so playback continues with the new voice.
+     */
+    fun changeVoice(context: Context, engine: SpeechEngine, voice: String) {
+        context.startService(
+            commandIntent(context, ACTION_CHANGE_VOICE)
+                .putExtra(EXTRA_VOICE_ENGINE, engine.storageKey)
+                .putExtra(EXTRA_VOICE_ID, voice),
+        )
+    }
+
+    /** Changes the pace of the running narration without restarting the session. */
+    fun setSpeechRate(context: Context, rate: Float) {
+        context.startService(
+            commandIntent(context, ACTION_SET_RATE)
+                .putExtra(EXTRA_SPEECH_RATE, rate),
         )
     }
 

@@ -2,12 +2,15 @@ package com.geneing.epubreader.reader
 
 import android.net.Uri
 import android.os.Bundle
-import android.os.SystemClock
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.content.res.Configuration
-import android.graphics.PointF
 import android.util.Size
+import android.view.ActionMode
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
-import android.view.ViewConfiguration
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.animateFloatAsState
@@ -102,10 +105,12 @@ import kotlinx.coroutines.withContext
 import org.readium.r2.navigator.DecorableNavigator
 import org.readium.r2.navigator.Decoration
 import org.readium.r2.navigator.OverflowableNavigator
+import org.readium.r2.navigator.SelectableNavigator
+import org.readium.r2.navigator.Selection
 import org.readium.r2.navigator.VisualNavigator
 import org.readium.r2.navigator.input.DragEvent
 import org.readium.r2.navigator.input.InputListener
-import org.readium.r2.navigator.input.TapEvent
+import org.readium.r2.navigator.util.BaseActionModeCallback
 import org.readium.r2.navigator.epub.EpubPreferences
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
@@ -173,9 +178,6 @@ class ReaderActivity : FragmentActivity() {
     private var scrollConfiguredHref: String? = null
     private var autoFollowReadingPosition by mutableStateOf(true)
     private var recenterButtonVisible by mutableStateOf(false)
-    private var lastTapAt = 0L
-    private var lastTapX = 0f
-    private var lastTapY = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val format = BookFormat.from(
@@ -378,6 +380,7 @@ class ReaderActivity : FragmentActivity() {
                     configuration = EpubNavigatorFragment.Configuration(
                         shouldApplyInsetsPadding = false,
                         disablePageTurnsWhileScrolling = true,
+                        selectionActionModeCallback = selectionActionModeCallback(),
                     ),
                 ) to EpubNavigatorFragment::class.java
             BookFormat.PDF -> PdfNavigatorFactory(openedPublication, pdfiumEngineProvider)
@@ -522,33 +525,15 @@ class ReaderActivity : FragmentActivity() {
     private fun openedBookUri(): String = requireNotNull(intent.getStringExtra(EXTRA_BOOK_URI))
 
     /**
-     * A double tap on the text starts narration at the sentence under the finger.
-     * Readium's input listener only reports single taps, so a double tap is detected
-     * by matching two taps that land close together in time and space.
-     *
      * A touch drag is a genuine scroll by the reader, so it stops auto-following
      * until they tap the recenter button. Readium only reports these events for
      * real touch gestures, never for programmatic `go()`/`window.scrollBy` calls,
      * which makes this a reliable manual-scroll signal.
+     *
+     * Starting narration from a place in the text is done from the long-press
+     * selection menu ([selectionActionModeCallback]), not from a tap gesture.
      */
     private val readerInputListener = object : InputListener {
-        override fun onTap(event: TapEvent): Boolean {
-            val now = SystemClock.uptimeMillis()
-            val point = event.point
-            val slop = ViewConfiguration.get(this@ReaderActivity).scaledDoubleTapSlop.toFloat()
-            val dx = point.x - lastTapX
-            val dy = point.y - lastTapY
-            val isDoubleTap = lastTapAt != 0L &&
-                now - lastTapAt <= DOUBLE_TAP_TIMEOUT_MS &&
-                dx * dx + dy * dy <= slop * slop
-            lastTapAt = if (isDoubleTap) 0L else now
-            lastTapX = point.x
-            lastTapY = point.y
-            if (!isDoubleTap) return false
-            startReadAloudAtPoint(point)
-            return true
-        }
-
         override fun onDrag(event: DragEvent): Boolean {
             if (event.type == DragEvent.Type.Start) {
                 stopAutoFollowing()
@@ -563,6 +548,66 @@ class ReaderActivity : FragmentActivity() {
             }
             return false
         }
+    }
+
+    /**
+     * The text-selection menu shown by a long press. It keeps Copy and Share and
+     * adds "Play from here", which starts narration at the selected sentence.
+     */
+    private fun selectionActionModeCallback(): ActionMode.Callback =
+        object : BaseActionModeCallback() {
+            override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                menu.add(Menu.NONE, MENU_PLAY_FROM_HERE, 0, "Play from here")
+                menu.add(Menu.NONE, MENU_COPY, 1, "Copy")
+                menu.add(Menu.NONE, MENU_SHARE, 2, "Share")
+                return true
+            }
+
+            override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+                return when (item.itemId) {
+                    MENU_PLAY_FROM_HERE -> {
+                        lifecycleScope.launch {
+                            val selection = currentSelection() ?: return@launch
+                            mode.finish()
+                            startTtsAt(selection.locator, alignToSelection = true)
+                        }
+                        true
+                    }
+                    MENU_COPY -> {
+                        lifecycleScope.launch {
+                            val text = currentSelection()?.locator?.text?.highlight
+                            mode.finish()
+                            if (!text.isNullOrBlank()) copyToClipboard(text)
+                        }
+                        true
+                    }
+                    MENU_SHARE -> {
+                        lifecycleScope.launch {
+                            val text = currentSelection()?.locator?.text?.highlight
+                            mode.finish()
+                            if (!text.isNullOrBlank()) shareText(text)
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+
+    private suspend fun currentSelection(): Selection? =
+        (currentNavigatorFragment() as? SelectableNavigator)?.currentSelection()
+
+    private fun copyToClipboard(text: String) {
+        val clipboard = getSystemService(ClipboardManager::class.java) ?: return
+        clipboard.setPrimaryClip(ClipData.newPlainText("Selected text", text))
+    }
+
+    private fun shareText(text: String) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        runCatching { startActivity(Intent.createChooser(send, "Share text")) }
     }
 
     /** The reader took over scrolling, so stop moving the page under them. */
@@ -620,50 +665,6 @@ class ReaderActivity : FragmentActivity() {
                 ?: return@launch
             fragment.go(previousLocator, animated = false)
         }
-    }
-
-    private fun startReadAloudAtPoint(point: PointF) {
-        if (currentFormat != BookFormat.EPUB) return
-        lifecycleScope.launch {
-            val selection = sentenceAtPoint(point)
-            if (selection == null) {
-                playbackError = "Couldn't find a sentence at that spot."
-                return@launch
-            }
-            startTtsAt(selection.locator, alignToSelection = true)
-        }
-    }
-
-    private data class SentenceSelection(val locator: Locator, val text: String)
-
-    /**
-     * Finds the sentence under a device-pixel [point] in the EPUB content and
-     * returns it as a locator carrying the sentence text and the block's
-     * `cssSelector`, so narration can start at the tapped sentence.
-     */
-    private suspend fun sentenceAtPoint(point: PointF): SentenceSelection? {
-        val navigator = currentNavigatorFragment() as? EpubNavigatorFragment ?: return null
-        val script = SENTENCE_AT_POINT_JS
-            .replace("__X__", point.x.toString())
-            .replace("__Y__", point.y.toString())
-        val json = runCatching { navigator.evaluateJavascript(script) }.getOrNull()
-        val obj = json?.takeIf { it != "null" }
-            ?.let { runCatching { JSONObject(it) }.getOrNull() }
-            ?: return null
-        val text = obj.optString("text").takeIf { it.isNotBlank() } ?: return null
-        val base = navigator.currentLocator.value
-        val selector = obj.optString("selector").takeIf { it.isNotBlank() }
-        val locations = if (selector == null) {
-            base.locations
-        } else {
-            base.locations.copy(
-                otherLocations = base.locations.otherLocations + ("cssSelector" to selector),
-            )
-        }
-        return SentenceSelection(
-            locator = base.copy(locations = locations, text = Locator.Text(highlight = text)),
-            text = text,
-        )
     }
 
     private suspend fun applyTtsDecoration(locator: Locator) {
@@ -1006,88 +1007,11 @@ class ReaderActivity : FragmentActivity() {
         private const val TTS_DECORATION_ID = "tts-current-utterance"
         private const val TTS_DECORATION_GROUP = "tts"
         private const val MAX_SEARCH_RESULTS = 100
-        private const val DOUBLE_TAP_TIMEOUT_MS = 300L
         private const val RESOURCE_LOAD_SETTLE_MS = 450L
         private const val SCRUB_THROTTLE_MS = 70L
-
-        /**
-         * Finds the sentence under the tapped point (device pixels) and returns
-         * `{ selector, text }`, where `selector` is the CSS selector of the nearest
-         * block element. Used to start narration at the double-tapped sentence.
-         */
-        private val SENTENCE_AT_POINT_JS = """
-            (function () {
-              var ratio = window.devicePixelRatio || 1;
-              var range = null;
-              var pointX = __X__ / ratio;
-              var pointY = __Y__ / ratio;
-              if (document.caretRangeFromPoint) {
-                range = document.caretRangeFromPoint(pointX, pointY);
-              } else if (document.caretPositionFromPoint) {
-                var caret = document.caretPositionFromPoint(pointX, pointY);
-                if (caret) {
-                  range = document.createRange();
-                  range.setStart(caret.offsetNode, caret.offset);
-                  range.collapse(true);
-                }
-              }
-              if (!range) return null;
-              var startNode = range.startContainer;
-              var startOffset = range.startOffset;
-              var element = startNode.nodeType === 3 ? startNode.parentNode : startNode;
-              var BLOCK = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dd,dt,pre,article,section';
-              var block = (element && element.closest) ? (element.closest(BLOCK) || element) : element;
-              if (!block || !block.ownerDocument) return null;
-              var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
-              var nodes = [];
-              var blockText = '';
-              var node;
-              while ((node = walker.nextNode())) {
-                nodes.push({ node: node, start: blockText.length, end: blockText.length + node.nodeValue.length });
-                blockText += node.nodeValue;
-              }
-              if (nodes.length === 0) return null;
-              function offsetOf(n, o) {
-                for (var k = 0; k < nodes.length; k++) {
-                  if (nodes[k].node === n) return nodes[k].start + o;
-                }
-                return -1;
-              }
-              var pos = offsetOf(startNode, startOffset);
-              if (pos < 0) pos = 0;
-              var i = pos;
-              while (i > 0) {
-                var before = blockText.charAt(i - 1);
-                if (before === '.' || before === '!' || before === '?' || before === '\n' || before === '\r') break;
-                i--;
-              }
-              var start = i;
-              while (start < blockText.length && /\s/.test(blockText.charAt(start))) start++;
-              var j = Math.max(pos, i);
-              while (j < blockText.length) {
-                var ch = blockText.charAt(j);
-                if (ch === '.' || ch === '!' || ch === '?') { j++; break; }
-                if (ch === '\n' || ch === '\r') break;
-                j++;
-              }
-              while (j < blockText.length && /["'\u2019\u201d)\]]/.test(blockText.charAt(j))) j++;
-              if (j <= start) return null;
-              function selectorFor(el) {
-                var parts = [];
-                while (el && el.nodeType === 1 && el !== document.body && el !== document.documentElement) {
-                  var part = el.tagName.toLowerCase();
-                  var parent = el.parentElement;
-                  if (parent && parent.children.length > 1) {
-                    part += ':nth-child(' + (Array.prototype.indexOf.call(parent.children, el) + 1) + ')';
-                  }
-                  parts.unshift(part);
-                  el = parent;
-                }
-                return parts.join(' > ');
-              }
-              return { selector: selectorFor(block), text: blockText.substring(start, j) };
-            })()
-        """.trimIndent()
+        private const val MENU_PLAY_FROM_HERE = 1001
+        private const val MENU_COPY = 1002
+        private const val MENU_SHARE = 1003
 
         /**
          * Scrolls the narrated sentence into the middle band of the viewport, but

@@ -71,6 +71,9 @@ dependencies {
     implementation(libs.readium.tts)
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.exoplayer)
+    // On-device GenAI TTS voices (Pixel/Samsung devices, Speech Recognition &
+    // Synthesis app). Alpha API: keep the integration behind app-owned types.
+    implementation(libs.mlkit.genai.tts)
     // pockettts-core exposes the pinned LiteRT 2.3.2 runtime, GPU accelerator,
     // and Google Tensor NPU runtime (including the dispatch shim) transitively.
     implementation(project(":pockettts-service"))

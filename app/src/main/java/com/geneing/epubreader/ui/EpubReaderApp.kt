@@ -102,6 +102,7 @@ import com.geneing.epubreader.data.SpeechEngine
 import com.geneing.epubreader.data.ThemeMode
 import com.geneing.epubreader.playback.PlaybackServiceCommands
 import com.geneing.epubreader.playback.PlaybackUiState
+import com.geneing.epubreader.playback.persistPlaybackVoice
 import com.geneing.epubreader.reader.ReaderActivity
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -650,12 +651,14 @@ private fun SettingsContent(
     onResumeAfterLongInterruptionChanged: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
+    var voicePickerOpen by remember { mutableStateOf(false) }
+    var systemVoice by remember { mutableStateOf(AppPreferences.systemTtsVoice(context)) }
+    var pocketVoice by remember { mutableStateOf(AppPreferences.pocketTtsVoice(context)) }
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .padding(innerPadding),
-    ) {
-        Column(
+    ) {        Column(
             modifier = Modifier
                 .widthIn(max = maxWidth.coerceAtMost(720.dp))
                 .fillMaxWidth()
@@ -733,6 +736,18 @@ private fun SettingsContent(
                         valueRange = AppPreferences.MIN_SPEECH_RATE..AppPreferences.MAX_SPEECH_RATE,
                         steps = 14,
                     )
+                    Text(
+                        text = if (speechEngine == SpeechEngine.POCKET) {
+                            "Pocket voice · ${pocketTtsVoice.replaceFirstChar(Char::uppercase)}"
+                        } else {
+                            "System voice · ${systemVoice ?: "engine default"}"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { voicePickerOpen = true }) {
+                        Text("Choose narration voice")
+                    }
                     TextButton(
                         onClick = {
                             runCatching { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
@@ -833,6 +848,28 @@ private fun SettingsContent(
                 }
             }
         }
+    }
+
+    if (voicePickerOpen) {
+        PlaybackVoiceDialog(
+            currentSystemVoice = systemVoice,
+            currentPocketVoice = pocketVoice,
+            pocketInstalled = pocketModels.installed,
+            pocketVoices = pocketModels.voices,
+            onDismiss = { voicePickerOpen = false },
+            onSystemVoiceSelected = { voice ->
+                systemVoice = voice.id
+                voicePickerOpen = false
+                persistPlaybackVoice(context, SpeechEngine.ANDROID_SYSTEM, voice.id)
+                onSpeechEngineSelected(SpeechEngine.ANDROID_SYSTEM)
+            },
+            onPocketVoiceSelected = { voice ->
+                pocketVoice = voice
+                voicePickerOpen = false
+                persistPlaybackVoice(context, SpeechEngine.POCKET, voice)
+                onSpeechEngineSelected(SpeechEngine.POCKET)
+            },
+        )
     }
 }
 

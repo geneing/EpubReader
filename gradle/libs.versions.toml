@@ -11,6 +11,7 @@ fragment = "1.9.1"
 readium = "3.4.0"
 media3 = "1.11.1"
 litert = "2.3.2"
+mlkit-tts = "1.0.0-alpha1"
 desugar = "2.1.5"
 junit = "4.13.2"
 androidx-test-runner = "1.7.0"
@@ -45,6 +46,7 @@ litert-api = { module = "com.google.ai.edge.litert:litert-api", version.ref = "l
 litert-runtime = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
 litert-gpu = { module = "com.google.ai.edge.litert:litert-gpu", version.ref = "litert" }
 litert-npu-runtime-google-tensor = { module = "com.google.ai.edge.litert:litert-npu-runtime-google-tensor", version.ref = "litert" }
+mlkit-genai-tts = { module = "com.google.mlkit:genai-text-to-speech", version.ref = "mlkit-tts" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
