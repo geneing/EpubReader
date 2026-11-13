@@ -118,6 +118,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         refreshPocketModels()
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.refreshMissingRelativePaths()
+        }
     }
 
     fun addFolder(uri: Uri) = launchOperation("add-folder") {

@@ -30,6 +30,7 @@ data class BookEntity(
     val folderUri: String?,
     val displayName: String,
     val mimeType: String,
+    @ColumnInfo(defaultValue = "") val relativePath: String = "",
     val sizeBytes: Long,
     val lastModified: Long,
     val isAvailable: Boolean = true,
@@ -88,6 +89,9 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE folderUri = :folderUri")
     suspend fun findInFolder(folderUri: String): List<BookEntity>
 
+    @Query("SELECT DISTINCT folderUri FROM books WHERE folderUri IS NOT NULL AND relativePath = ''")
+    suspend fun foldersWithMissingRelativePaths(): List<String>
+
     @Upsert
     suspend fun upsert(book: BookEntity)
 
@@ -136,7 +140,7 @@ interface ReadingStopDao {
 
 @Database(
     entities = [BookFolderEntity::class, BookEntity::class, ReadingStopEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class LibraryDatabase : RoomDatabase() {
@@ -181,12 +185,20 @@ abstract class LibraryDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN relativePath TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun get(context: Context): LibraryDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 LibraryDatabase::class.java,
                 "epubreader-library.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .build()
+                .also { instance = it }
         }
     }
 }

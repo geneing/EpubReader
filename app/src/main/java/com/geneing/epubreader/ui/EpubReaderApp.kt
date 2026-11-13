@@ -5,9 +5,11 @@ import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -34,6 +36,8 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.automirrored.outlined.LibraryBooks
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PictureAsPdf
@@ -51,6 +55,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -132,8 +137,25 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
     val drawerState = androidx.compose.material3.rememberDrawerState(DrawerValue.Closed)
     var destination by rememberSaveable { mutableStateOf(LibraryDestination.RECENT) }
     var selectedFolderUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var folderPath by rememberSaveable { mutableStateOf("") }
+    var folderFlatView by rememberSaveable { mutableStateOf(false) }
     var allFilesSearchOpen by rememberSaveable { mutableStateOf(false) }
     var allFilesSearchQuery by rememberSaveable { mutableStateOf("") }
+
+    fun closeFolderOrGoUp() {
+        if (folderPath.isNotBlank()) {
+            folderPath = parentPathOf(folderPath)
+        } else {
+            selectedFolderUri = null
+            folderPath = ""
+            folderFlatView = false
+            destination = LibraryDestination.FOLDERS
+        }
+    }
+
+    BackHandler(enabled = destination == LibraryDestination.FOLDER_CONTENTS) {
+        closeFolderOrGoUp()
+    }
 
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
@@ -170,6 +192,8 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                             onClick = {
                                 destination = item
                                 selectedFolderUri = null
+                                folderPath = ""
+                                folderFlatView = false
                                 scope.launch { drawerState.close() }
                             },
                             icon = { Icon(item.icon, contentDescription = null) },
@@ -202,11 +226,11 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                     CenterAlignedTopAppBar(
                         navigationIcon = {
                             if (destination == LibraryDestination.FOLDER_CONTENTS) {
-                                IconButton(onClick = {
-                                    selectedFolderUri = null
-                                    destination = LibraryDestination.FOLDERS
-                                }) {
-                                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to folders")
+                                IconButton(onClick = { closeFolderOrGoUp() }) {
+                                    Icon(
+                                        Icons.AutoMirrored.Outlined.ArrowBack,
+                                        contentDescription = if (folderPath.isBlank()) "Back to folders" else "Back to parent folder",
+                                    )
                                 }
                             } else {
                                 IconButton(onClick = { scope.launch { drawerState.open() } }) {
@@ -219,10 +243,14 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                                 Text("EpubReader", fontWeight = FontWeight.SemiBold)
                                 Text(
                                     if (destination == LibraryDestination.FOLDER_CONTENTS) {
-                                        state.folders.firstOrNull { it.treeUri == selectedFolderUri }?.displayName ?: "Folder contents"
+                                        val folderName = state.folders.firstOrNull { it.treeUri == selectedFolderUri }?.displayName
+                                            ?: "Folder contents"
+                                        (listOf(folderName) + breadcrumbSegments(folderPath)).joinToString(" › ")
                                     } else destination.title,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         },
@@ -319,6 +347,8 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                         onRemove = viewModel::removeFolder,
                         onOpenFolder = { folder ->
                             selectedFolderUri = folder.treeUri
+                            folderPath = ""
+                            folderFlatView = false
                             destination = LibraryDestination.FOLDER_CONTENTS
                         },
                     )
@@ -345,8 +375,12 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                             FolderBooksContent(
                                 folder = folder,
                                 books = state.books.filter { it.folderUri == folder.treeUri },
+                                path = folderPath,
+                                flatView = folderFlatView,
                                 innerPadding = innerPadding,
                                 busyKeys = state.busyKeys,
+                                onPathChange = { folderPath = it },
+                                onFlatViewChange = { folderFlatView = it },
                                 onOpenBook = { book ->
                                     viewModel.markBookOpened(book)
                                     openBook(context, book)
@@ -563,16 +597,25 @@ private fun FoldersContent(
 private fun FolderBooksContent(
     folder: BookFolderEntity,
     books: List<BookEntity>,
+    path: String,
+    flatView: Boolean,
     innerPadding: androidx.compose.foundation.layout.PaddingValues,
     busyKeys: Set<String>,
+    onPathChange: (String) -> Unit,
+    onFlatViewChange: (Boolean) -> Unit,
     onOpenBook: (BookEntity) -> Unit,
     onLoadMetadata: (BookEntity) -> Unit,
     onShareBook: (BookEntity) -> Unit,
     onRemoveBook: (BookEntity) -> Unit,
 ) {
-    val orderedBooks = books.sortedWith(
-        compareByDescending<BookEntity> { it.lastOpenedAt }.thenBy { it.displayName.lowercase() },
-    )
+    val contents = remember(books, path) { directoryContents(books, path) }
+    val orderedBooks = remember(books) {
+        books.sortedWith(
+            compareByDescending<BookEntity> { it.lastOpenedAt }.thenBy { it.displayName.lowercase() },
+        )
+    }
+    val currentName = breadcrumbSegments(path).lastOrNull() ?: folder.displayName
+    val scanned = folder.lastScannedAt?.let(::formatDate) ?: "not yet"
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -593,33 +636,201 @@ private fun FolderBooksContent(
         ) {
             item {
                 ScreenHeader(
-                    title = folder.displayName,
-                    description = "Books found in this folder. Source files remain in their original location.",
-                    trailing = "${orderedBooks.count(BookEntity::isAvailable)} available · last scanned ${folder.lastScannedAt?.let(::formatDate) ?: "not yet"}",
+                    title = currentName,
+                    description = if (flatView) {
+                        "Every book found in this folder and its subfolders."
+                    } else {
+                        "Browse this folder a level at a time. Source files remain in their original location."
+                    },
+                    trailing = "${books.count(BookEntity::isAvailable)} books · last scanned $scanned",
                 )
             }
-            if (orderedBooks.isEmpty()) {
-                item {
-                    RouteEmptyCard(
-                        title = "No EPUB or PDF files found",
-                        description = "Scan this folder again after adding books.",
-                        onAddFolder = null,
-                        onAddFile = null,
-                    )
+            item {
+                FolderViewToggle(flatView = flatView, onFlatViewChange = onFlatViewChange)
+            }
+            if (flatView) {
+                if (orderedBooks.isEmpty()) {
+                    item {
+                        RouteEmptyCard(
+                            title = "No EPUB or PDF files found",
+                            description = "Scan this folder again after adding books.",
+                            onAddFolder = null,
+                            onAddFile = null,
+                        )
+                    }
+                } else {
+                    item { SectionHeading("ALL FILES", orderedBooks.size.toString()) }
+                    items(orderedBooks, key = { "folder-book:${it.uri}" }) { book ->
+                        BookCard(
+                            book = book,
+                            removing = "remove:${book.uri}" in busyKeys,
+                            onOpen = { onOpenBook(book) },
+                            onLoadMetadata = { onLoadMetadata(book) },
+                            onRemove = { onRemoveBook(book) },
+                            onShare = { onShareBook(book) },
+                        )
+                    }
                 }
             } else {
-                item { SectionHeading("FILES IN THIS FOLDER", orderedBooks.size.toString()) }
-                items(orderedBooks, key = { "folder-book:${it.uri}" }) { book ->
-                    BookCard(
-                        book = book,
-                        removing = "remove:${book.uri}" in busyKeys,
-                        onOpen = { onOpenBook(book) },
-                        onLoadMetadata = { onLoadMetadata(book) },
-                        onRemove = { onRemoveBook(book) },
-                        onShare = { onShareBook(book) },
-                    )
+                if (path.isNotBlank()) {
+                    item {
+                        FolderBreadcrumb(
+                            rootName = folder.displayName,
+                            path = path,
+                            onNavigate = onPathChange,
+                        )
+                    }
+                }
+                if (contents.folders.isNotEmpty()) {
+                    item { SectionHeading("FOLDERS", contents.folders.size.toString()) }
+                    items(contents.folders, key = { "folder-dir:${it.path}" }) { node ->
+                        FolderRow(node = node, onOpen = { onPathChange(node.path) })
+                    }
+                }
+                if (contents.books.isNotEmpty()) {
+                    item { SectionHeading("FILES HERE", contents.books.size.toString()) }
+                    items(contents.books, key = { "folder-book:${it.uri}" }) { book ->
+                        BookCard(
+                            book = book,
+                            removing = "remove:${book.uri}" in busyKeys,
+                            onOpen = { onOpenBook(book) },
+                            onLoadMetadata = { onLoadMetadata(book) },
+                            onRemove = { onRemoveBook(book) },
+                            onShare = { onShareBook(book) },
+                        )
+                    }
+                }
+                if (contents.folders.isEmpty() && contents.books.isEmpty()) {
+                    item {
+                        RouteEmptyCard(
+                            title = "This folder is empty",
+                            description = "No folders or EPUB/PDF files here. Scan this folder again after adding books.",
+                            onAddFolder = null,
+                            onAddFile = null,
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FolderViewToggle(
+    flatView: Boolean,
+    onFlatViewChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FilterChip(
+            selected = !flatView,
+            onClick = { onFlatViewChange(false) },
+            label = { Text("Folders") },
+            leadingIcon = { Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(18.dp)) },
+        )
+        FilterChip(
+            selected = flatView,
+            onClick = { onFlatViewChange(true) },
+            label = { Text("All files") },
+            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.LibraryBooks, contentDescription = null, modifier = Modifier.size(18.dp)) },
+        )
+    }
+}
+
+@Composable
+private fun FolderBreadcrumb(
+    rootName: String,
+    path: String,
+    onNavigate: (String) -> Unit,
+) {
+    val segments = breadcrumbSegments(path)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = { onNavigate("") }) {
+            Text(rootName, maxLines = 1)
+        }
+        segments.forEachIndexed { index, segment ->
+            Icon(
+                Icons.Outlined.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+            val target = segments.subList(0, index + 1).joinToString("/")
+            if (index == segments.lastIndex) {
+                Text(
+                    segment,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+            } else {
+                TextButton(onClick = { onNavigate(target) }) {
+                    Text(segment, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FolderRow(
+    node: FolderNode,
+    onOpen: () -> Unit,
+) {
+    Card(
+        onClick = onOpen,
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Outlined.Folder,
+                contentDescription = null,
+                tint = Sage,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Sage.copy(alpha = 0.10f))
+                    .padding(9.dp),
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    node.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${node.bookCount} ${if (node.bookCount == 1) "book" else "books"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                Icons.Outlined.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

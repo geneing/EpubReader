@@ -127,6 +127,17 @@ class LibraryRepository(context: Context) {
         }
     }
 
+    /**
+     * Refreshes folders whose books predate relative-path tracking (databases migrated from
+     * version 5 or earlier), so the folder browser can show a tree. Failures are ignored here;
+     * the affected folder keeps its scan error and is retried on the next launch.
+     */
+    suspend fun refreshMissingRelativePaths() {
+        database.books().foldersWithMissingRelativePaths().forEach { folderUri ->
+            runCatching { scanFolder(folderUri) }
+        }
+    }
+
     suspend fun removeFolder(uriString: String) {
         database.withTransaction {
             database.readingStops().deleteForFolder(uriString)

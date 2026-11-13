@@ -18,35 +18,37 @@ internal class SafBookScanner(
 
         val results = LinkedHashMap<String, BookEntity>()
         val visitedDirectories = HashSet<String>()
-        val pending = ArrayDeque<Pair<DocumentFile, Int>>()
-        pending.add(root to 0)
+        val pending = ArrayDeque<PendingDirectory>()
+        pending.add(PendingDirectory(root, relativePath = "", depth = 0))
 
         while (pending.isNotEmpty()) {
             currentCoroutineContext().ensureActive()
-            val (directory, depth) = pending.removeLast()
+            val (directory, directoryPath, depth) = pending.removeLast()
             if (!visitedDirectories.add(directory.uri.toString())) continue
 
             for (child in directory.listFiles()) {
                 currentCoroutineContext().ensureActive()
+                val childName = child.name ?: continue
                 if (child.isDirectory) {
                     if (depth < MAX_NESTED_FOLDER_DEPTH && child.canRead()) {
-                        pending.add(child to depth + 1)
+                        val childPath = if (directoryPath.isEmpty()) childName else "$directoryPath/$childName"
+                        pending.add(PendingDirectory(child, childPath, depth + 1))
                     }
                     continue
                 }
 
                 if (!child.isFile || !child.canRead()) continue
-                val displayName = child.name ?: continue
                 val mimeType = context.contentResolver.getType(child.uri)
-                    ?: BookFormat.from(displayName, null)?.mimeType
+                    ?: BookFormat.from(childName, null)?.mimeType
                     ?: continue
-                if (BookFormat.from(displayName, mimeType) == null) continue
+                if (BookFormat.from(childName, mimeType) == null) continue
 
                 results[child.uri.toString()] = BookEntity(
                     uri = child.uri.toString(),
                     folderUri = folderUriString,
-                    displayName = displayName,
+                    displayName = childName,
                     mimeType = mimeType,
+                    relativePath = if (directoryPath.isEmpty()) childName else "$directoryPath/$childName",
                     sizeBytes = child.length().coerceAtLeast(0L),
                     lastModified = child.lastModified().coerceAtLeast(0L),
                     isAvailable = true,
@@ -56,6 +58,12 @@ internal class SafBookScanner(
 
         return results.values.toList()
     }
+
+    private data class PendingDirectory(
+        val directory: DocumentFile,
+        val relativePath: String,
+        val depth: Int,
+    )
 
     private companion object {
         const val MAX_NESTED_FOLDER_DEPTH = 16

@@ -57,6 +57,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - [x] Wired ML Kit voice status/download through `com.google.mlkit:genai-text-to-speech:1.0.0-alpha1`: downloadable models are marked in the picker and downloaded with progress before selection, so a voice is never synthesized before its model is installed. Verified on the Pixel 11 that `en-us-x-star04-local` and `en-us-x-star12-local` resolve through the Readium `AndroidTtsEngine.VoiceSelector` and playback continues after the switch.
 - [x] Added a speech-rate control to the mini-player (0.5x-2.0x) that applies without restarting the session: Android TTS receives new preferences; the Pocket session re-renders the current sentence at the new rate.
 - [x] Replaced double-tap-to-read with the long-press selection menu: `Play from here`, `Copy`, and `Share` are provided by `EpubNavigatorFragment.Configuration.selectionActionModeCallback` using `SelectableNavigator.currentSelection()`.
+- [x] Added folder-tree browsing for connected folders. The scanner now stores each book's path relative to its connected folder (Room v5→v6), and folder contents show subfolders one level at a time with breadcrumbs and back navigation, plus an "All files" toggle for the previous flat list. Existing libraries are re-scanned once in the background to fill the new paths. Unit tests cover the tree grouping; built and installed on the Pixel 11.
 
 ## Immediate next steps
 

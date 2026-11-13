@@ -76,9 +76,15 @@ Record durable decisions, discoveries, integration constraints, and bugs/pitfall
 - **Verify Pocket on-device without unlocking the phone.** `app/src/androidTest/.../PocketTtsDeviceSmokeTest.kt` builds the engine from the provisioned files, synthesizes one sentence, and logs the placement and sample count; it runs under `connectedDebugAndroidTest` even while the Pixel is locked. On 2026-11-07 it reported `engine lm:CPU dectx:CPU dec:GPU` and 51840 samples (2.16 s at 24 kHz) in 1494 ms. Run it with `ANDROID_SERIAL=<serial>` so the nearby Pixel_10 AVD (which has no models) is not included; the test skips itself when models are absent.
 - **`connectedDebugAndroidTest` uninstalls the app afterwards and wipes the provisioned model cache.** Pass `-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true` to keep the app installed, or re-run `scripts/provision-pocket-models.ps1` after the test. Recreate the app-owned `voices/` directory by launching the app once before pushing custom voices; a shell-created `voices/` is not readable by the app.
 
+## Decisions and discoveries (2026-11-13)
+
+- **Folder browsing stores the book's path relative to the connected folder.** SAF document URIs cannot be reliably converted into a folder tree across providers (document IDs are provider-specific; Downloads uses numeric IDs), so `SafBookScanner` records `relativePath` (directories + filename) on each `BookEntity`. The library builds a level-at-a-time tree from those paths instead of enumerating the provider again; the flat list remains available as a toggle.
+- **Relative-path migration is self-healing.** Room v5→v6 adds `relativePath TEXT NOT NULL DEFAULT ''`. `LibraryRepository.refreshMissingRelativePaths()` scans only folders that still have blank paths on launch, ignores per-folder failures, and retries them next launch, so an upgraded library becomes browsable without asking the user to rescan.
+
 ## Bugs and pitfalls to avoid
 
 - Do not store a raw path or display filename as the durable book identity; SAF URIs/provider document IDs and persisted grants are required.
+- Do not build folder navigation from SAF document IDs or display names; persist the scanner's relative path instead, and keep books whose path is missing at the root so they stay reachable.
 - Do not assume a persisted folder grant guarantees that the folder/file/provider stays present or online.
 - Do not use broad storage permissions as a shortcut around user-selected SAF access.
 - Do not place reader text/player controls under the status bar, camera hole/notch, navigation bar, or IME just to achieve an edge-to-edge look.
