@@ -5,7 +5,7 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 ## Current status
 
 - **Stage:** Initial Android implementation.
-- **Active branch:** `feature/tts-voice-picker` (voice picker, speech rate, long-press "Play from here").
+- **Active branch:** `feature/folder-tree` (folder-tree browsing for connected folders).
 - **Current milestone:** Polish the EPUB reading and narration experience: continuous vertical scrolling that fills the window, all Android/ML Kit/Pocket voice selection during playback, live speech-rate control, long-press "Play from here", narration auto-follow, and background notification controls.
 - **Device strategy:** Host AVD is the default for UI, SAF, lifecycle, and Android System TTS. Pixel 11 (Tensor G6) is reserved for real Pocket TTS/LiteRT inference and performance.
 
