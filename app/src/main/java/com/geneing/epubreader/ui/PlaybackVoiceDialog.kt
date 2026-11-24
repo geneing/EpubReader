@@ -42,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,6 +75,7 @@ internal fun PlaybackVoiceDialog(
     onPocketVoiceSelected: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val locale = LocalLocale.current
     val scope = rememberCoroutineScope()
     val mlKit = remember { MlKitVoiceModels() }
     var tab by remember { mutableStateOf(0) }
@@ -108,7 +110,7 @@ internal fun PlaybackVoiceDialog(
                 languages.firstOrNull { id.startsWith("${it.tag.lowercase()}-") }?.tag
             }
             languageTag = currentVoiceTag
-                ?: languages.firstOrNull { it.tag.equals(Locale.getDefault().toLanguageTag(), true) }?.tag
+                ?: languages.firstOrNull { it.tag.equals(locale.toLanguageTag(), true) }?.tag
                 ?: languages.firstOrNull { it.tag.startsWith("en", ignoreCase = true) }?.tag
                 ?: languages.firstOrNull()?.tag
         }
@@ -260,7 +262,7 @@ internal fun PlaybackVoiceDialog(
                                     )
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            voice.replaceFirstChar { it.titlecase(Locale.getDefault()) },
+                                            voice.replaceFirstChar { it.titlecase(locale.platformLocale) },
                                             style = MaterialTheme.typography.bodyLarge,
                                         )
                                         Text(
