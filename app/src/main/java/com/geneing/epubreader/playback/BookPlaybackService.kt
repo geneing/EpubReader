@@ -15,27 +15,30 @@ import android.os.Looper
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
-import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
-import androidx.media3.session.MediaNotification
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import androidx.lifecycle.lifecycleScope
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
+import com.google.common.collect.ImmutableList
 import com.geneing.epubreader.MainActivity
 import com.geneing.epubreader.R
 import com.geneing.epubreader.data.AppPreferences
-import com.geneing.epubreader.data.BookFormat
+import com.geneing.epubreader.data.BookEntity
+import com.geneing.epubreader.data.BookFolderEntity
 import com.geneing.epubreader.data.LibraryRepository
+import com.geneing.epubreader.data.SpeechEngine
 import com.geneing.epubreader.reader.ReadiumPublicationLoader
 import com.geneing.epubreader.reader.ReaderActivity
 import kotlinx.coroutines.CancellationException
@@ -62,19 +65,20 @@ import org.json.JSONObject
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.coverFitting
 import org.readium.r2.shared.util.getOrElse
+import java.util.Locale
 import java.util.concurrent.TimeUnit
-import java.io.File
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalReadiumApi::class)
-class BookPlaybackService : MediaSessionService() {
+class BookPlaybackService : MediaLibraryService() {
     private val repository by lazy { LibraryRepository(applicationContext) }
     private val publicationLoader by lazy { ReadiumPublicationLoader(applicationContext) }
     private val pocketTtsModelManager by lazy { PocketTtsModelManager(applicationContext) }
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
+    private val autoLibrary by lazy { AutoMediaLibrary }
 
-    private var placeholderPlayer: ExoPlayer? = null
-    private var mediaSession: MediaSession? = null
+    private var sessionPlayer: BookSessionPlayer? = null
+    private var mediaSession: MediaLibraryService.MediaLibrarySession? = null
     private var publication: Publication? = null
     private var ttsNavigator: NarrationController? = null
     private var activeBookUri: String? = null
@@ -91,25 +95,116 @@ class BookPlaybackService : MediaSessionService() {
     private var lastKnownBluetoothOutputConnected = false
     private var hasPlaybackNotification = false
     private var restartingNarration = false
+    private var lastSearchQuery = ""
 
     private val skipBackCommand = SessionCommand(PlaybackServiceCommands.ACTION_SKIP_BACK, Bundle.EMPTY)
     private val skipForwardCommand = SessionCommand(PlaybackServiceCommands.ACTION_SKIP_FORWARD, Bundle.EMPTY)
     private val stopCommand = SessionCommand(PlaybackServiceCommands.ACTION_STOP, Bundle.EMPTY)
+    private val cycleVoiceCommand = SessionCommand(PlaybackServiceCommands.ACTION_CYCLE_VOICE, Bundle.EMPTY)
+    private val cycleRateCommand = SessionCommand(PlaybackServiceCommands.ACTION_CYCLE_RATE, Bundle.EMPTY)
+    private val readAlongCommand = SessionCommand(PlaybackServiceCommands.ACTION_TOGGLE_READ_ALONG, Bundle.EMPTY)
 
-    private val mediaSessionCallback = object : MediaSession.Callback {
+    private val libraryCallback = object : MediaLibraryService.MediaLibrarySession.Callback {
         override fun onConnect(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): MediaSession.ConnectionResult {
-            val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+            val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
                 .buildUpon()
                 .add(skipBackCommand)
                 .add(skipForwardCommand)
                 .add(stopCommand)
+                .add(cycleVoiceCommand)
+                .add(cycleRateCommand)
+                .add(readAlongCommand)
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
                 .setAvailableSessionCommands(sessionCommands)
                 .build()
+        }
+
+        override fun onSetMediaItems(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: List<MediaItem>,
+            startIndex: Int,
+            startPositionMs: Long,
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+            val index = startIndex.takeIf { it in mediaItems.indices } ?: 0
+            mediaItems.getOrNull(index)?.let { item ->
+                AutoMediaLibrary.bookUri(item.mediaId)?.let(::startSelectedBook)
+            }
+            return Futures.immediateFuture(
+                MediaSession.MediaItemsWithStartPosition(mediaItems, index, startPositionMs),
+            )
+        }
+
+        override fun onAddMediaItems(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: List<MediaItem>,
+        ): ListenableFuture<List<MediaItem>> = Futures.immediateFuture(mediaItems)
+
+        override fun onGetLibraryRoot(
+            session: MediaLibraryService.MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            params: MediaLibraryService.LibraryParams?,
+        ): ListenableFuture<LibraryResult<MediaItem>> = futureResult {
+            LibraryResult.ofItem(autoLibrary.rootItem(), params)
+        }
+
+        override fun onGetItem(
+            session: MediaLibraryService.MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            mediaId: String,
+        ): ListenableFuture<LibraryResult<MediaItem>> = futureResult {
+            autoLibrary.item(mediaId, libraryFolders(), libraryBooks())
+                ?.let { LibraryResult.ofItem(it, null) }
+                ?: LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
+        }
+
+        override fun onGetChildren(
+            session: MediaLibraryService.MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+            page: Int,
+            pageSize: Int,
+            params: MediaLibraryService.LibraryParams?,
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = futureResult {
+            LibraryResult.ofItemList(
+                autoLibrary.children(parentId, libraryFolders(), libraryBooks(), page, pageSize),
+                params,
+            )
+        }
+
+        override fun onSearch(
+            session: MediaLibraryService.MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            params: MediaLibraryService.LibraryParams?,
+        ): ListenableFuture<LibraryResult<Void>> {
+            lastSearchQuery = query
+            return Futures.immediateFuture(LibraryResult.ofVoid(params))
+        }
+
+        override fun onGetSearchResult(
+            session: MediaLibraryService.MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            page: Int,
+            pageSize: Int,
+            params: MediaLibraryService.LibraryParams?,
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = futureResult {
+            LibraryResult.ofItemList(
+                autoLibrary.search(
+                    query.ifBlank { lastSearchQuery },
+                    libraryFolders(),
+                    libraryBooks(),
+                    page,
+                    pageSize,
+                ),
+                params,
+            )
         }
 
         override fun onCustomCommand(
@@ -122,6 +217,9 @@ class BookPlaybackService : MediaSessionService() {
                 PlaybackServiceCommands.ACTION_SKIP_BACK -> skipBackward()
                 PlaybackServiceCommands.ACTION_SKIP_FORWARD -> skipForward()
                 PlaybackServiceCommands.ACTION_STOP -> stopPlayback()
+                PlaybackServiceCommands.ACTION_CYCLE_VOICE -> cycleVoice()
+                PlaybackServiceCommands.ACTION_CYCLE_RATE -> cycleRate()
+                PlaybackServiceCommands.ACTION_TOGGLE_READ_ALONG -> toggleReadAlong()
                 else -> return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -207,10 +305,20 @@ class BookPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        placeholderPlayer = ExoPlayer.Builder(this).build()
-        val session = MediaSession.Builder(this, requireNotNull(placeholderPlayer))
-            .setCallback(mediaSessionCallback)
-            .setMediaButtonPreferences(mediaButtonPreferences())
+        val player = BookSessionPlayer(
+            object : BookSessionPlayer.Callbacks {
+                override fun onPlayRequested() = resumePlayback()
+                override fun onPauseRequested() = pauseByUser()
+                override fun onStopRequested() = pauseByUser()
+                override fun onSkipPreviousRequested() = skipBackward()
+                override fun onSkipNextRequested() = skipForward()
+                override fun onRateRequested(rate: Float) = applyRate(rate)
+            },
+        )
+        sessionPlayer = player
+        val session = MediaLibraryService.MediaLibrarySession.Builder(this, player, libraryCallback)
+            .setCustomLayout(commandButtons())
+            .setMediaButtonPreferences(commandButtons())
             .build()
         mediaSession = session
         // This service owns a single session and may not receive an external controller
@@ -229,7 +337,8 @@ class BookPlaybackService : MediaSessionService() {
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), RECEIVER_NOT_EXPORTED)
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibraryService.MediaLibrarySession? =
+        mediaSession
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val serviceResult = super.onStartCommand(intent, flags, startId)
@@ -257,6 +366,9 @@ class BookPlaybackService : MediaSessionService() {
             PlaybackServiceCommands.ACTION_SKIP_BACK -> skipBackward()
             PlaybackServiceCommands.ACTION_SKIP_FORWARD -> skipForward()
             PlaybackServiceCommands.ACTION_STOP -> stopPlayback()
+            PlaybackServiceCommands.ACTION_CYCLE_VOICE -> cycleVoice()
+            PlaybackServiceCommands.ACTION_CYCLE_RATE -> cycleRate()
+            PlaybackServiceCommands.ACTION_TOGGLE_READ_ALONG -> toggleReadAlong()
             PlaybackServiceCommands.ACTION_REFRESH_SETTINGS -> {
                 applyGracePeriodPreference()
             }
@@ -278,8 +390,7 @@ class BookPlaybackService : MediaSessionService() {
                     PlaybackServiceCommands.EXTRA_SPEECH_RATE,
                     AppPreferences.speechRate(applicationContext),
                 )
-                AppPreferences.setSpeechRate(applicationContext, rate)
-                ttsNavigator?.setRate(AppPreferences.speechRate(applicationContext))
+                applyRate(rate)
             }
         }
         return START_NOT_STICKY
@@ -336,6 +447,8 @@ class BookPlaybackService : MediaSessionService() {
                         progress = (book?.progressPercent?.div(100.0) ?: fallbackProgress / 100.0)
                             .toFloat().coerceIn(0f, 1f),
                         showMiniPlayer = true,
+                        readAlong = PlaybackStateStore.state.value.readAlong,
+                        speechRate = AppPreferences.speechRate(applicationContext),
                     ),
                 )
 
@@ -375,7 +488,6 @@ class BookPlaybackService : MediaSessionService() {
                 )
                 ttsNavigator = navigator
                 mediaSession?.setSessionActivity(createReaderPendingIntent(uriString, book?.displayName ?: displayName, book?.mimeType))
-                mediaSession?.setPlayer(ProgressPlayer(navigator.asMedia3Player()))
                 observePlayback(navigator, uriString, actualTitle, actualAuthor, book?.coverPath)
                 explicitUserPause = false
                 pausedForHeadsetDisconnect = false
@@ -391,6 +503,8 @@ class BookPlaybackService : MediaSessionService() {
                         bookUri = uriString,
                         title = foregroundBookTitle,
                         showMiniPlayer = true,
+                        readAlong = PlaybackStateStore.state.value.readAlong,
+                        speechRate = AppPreferences.speechRate(applicationContext),
                     ),
                 )
                 stopPlayback()
@@ -558,7 +672,6 @@ class BookPlaybackService : MediaSessionService() {
             restartingNarration = false
         }
         ttsNavigator = navigator
-        mediaSession?.setPlayer(ProgressPlayer(navigator.asMedia3Player()))
         observePlayback(navigator, uriString, title, author, coverPath)
         explicitUserPause = !playWhenReady
         pausedForHeadsetDisconnect = false
@@ -615,6 +728,9 @@ class BookPlaybackService : MediaSessionService() {
                 PlaybackStateStore.update(
                     PlaybackStateStore.state.value.copy(
                         currentLocator = locator,
+                        currentUtterance = location.utterance,
+                        currentRangeStart = location.range?.first,
+                        currentRangeEnd = location.range?.let { it.last + 1 },
                         progress = progress.toFloat().coerceIn(0f, 1f),
                         showMiniPlayer = true,
                     ),
@@ -669,6 +785,118 @@ class BookPlaybackService : MediaSessionService() {
         ttsNavigator?.skipToNextUtterance()
     }
 
+    /**
+     * Steps through the voices the current engine offers for the book's language.
+     * Android Auto cannot show a voice list, so the car button cycles instead and
+     * the button label names the voice that is playing.
+     */
+    private fun cycleVoice() {
+        if (ttsNavigator == null) return
+        lifecycleScope.launch {
+            when (AppPreferences.speechEngine(applicationContext)) {
+                SpeechEngine.ANDROID_SYSTEM -> {
+                    val language = publication?.metadata?.language
+                        ?.locale?.language
+                    val voices = withContext(Dispatchers.Main) {
+                        runCatching { SystemTtsVoiceCatalog.load(applicationContext) }
+                            .getOrDefault(emptyList())
+                    }
+                        .filter { it.installed }
+                        .filter { language == null || it.locale.language == language }
+                        .distinctBy { it.id }
+                        .sortedWith(compareBy({ it.localeTag }, { it.shortName }))
+                    if (voices.size < 2) {
+                        notifyUser("No other ${language ?: "device"} voices are installed.")
+                        return@launch
+                    }
+                    val current = AppPreferences.systemTtsVoice(applicationContext)
+                    val index = voices.indexOfFirst { it.id == current }
+                    val next = voices[(index + 1).mod(voices.size)]
+                    AppPreferences.setSpeechEngine(applicationContext, SpeechEngine.ANDROID_SYSTEM)
+                    AppPreferences.setSystemTtsVoice(applicationContext, next.id)
+                    changeVoice(SpeechEngine.ANDROID_SYSTEM, next.id)
+                    notifyUser("Voice: ${next.displayName} · ${next.localeLabel}")
+                }
+
+                SpeechEngine.POCKET -> {
+                    val voices = withContext(Dispatchers.IO) {
+                        pocketTtsModelManager.status().voices
+                    }.sorted()
+                    if (voices.size < 2) {
+                        notifyUser("Only one Pocket voice is installed.")
+                        return@launch
+                    }
+                    val current = AppPreferences.pocketTtsVoice(applicationContext)
+                    val index = voices.indexOf(current)
+                    val next = voices[(index + 1).mod(voices.size)]
+                    AppPreferences.setSpeechEngine(applicationContext, SpeechEngine.POCKET)
+                    AppPreferences.setPocketTtsVoice(applicationContext, next)
+                    changeVoice(SpeechEngine.POCKET, next)
+                    notifyUser("Voice: ${next.replaceFirstChar(Char::uppercase)}")
+                }
+            }
+        }
+    }
+
+    /** Steps 0.5× → 2.0× and applies the pace without restarting narration. */
+    private fun cycleRate() {
+        val current = AppPreferences.speechRate(applicationContext)
+        val next = RATE_STEPS.firstOrNull { it > current + 0.01f } ?: RATE_STEPS.first()
+        applyRate(next)
+        notifyUser("Speed: ${"%.1f".format(next)}×")
+    }
+
+    private fun applyRate(rate: Float) {
+        val bounded = rate.coerceIn(AppPreferences.MIN_SPEECH_RATE, AppPreferences.MAX_SPEECH_RATE)
+        AppPreferences.setSpeechRate(applicationContext, bounded)
+        ttsNavigator?.setRate(bounded)
+        PlaybackStateStore.update(PlaybackStateStore.state.value.copy(speechRate = bounded))
+        refreshMediaNotification()
+    }
+
+    /** Shows or hides the narrated sentence on the car now-playing screen. */
+    private fun toggleReadAlong() {
+        if (activeBookUri == null) return
+        val state = PlaybackStateStore.state.value
+        PlaybackStateStore.update(state.copy(readAlong = !state.readAlong))
+        notifyUser(if (!state.readAlong) "Showing narrated text in the car" else "Car screen back to book info")
+        refreshMediaNotification()
+    }
+
+    private fun startSelectedBook(uriString: String) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { repository.markBookOpened(uriString) }
+            }
+        }
+        startPlayback(
+            uriString = uriString,
+            fallbackProgress = 0.0,
+            initialLocator = null,
+            alignToSelection = false,
+        )
+    }
+
+    private suspend fun libraryBooks(): List<BookEntity> = repository.observeBooks().first()
+
+    private suspend fun libraryFolders(): List<BookFolderEntity> = repository.observeFolders().first()
+
+    private fun <T> futureResult(block: suspend () -> T): ListenableFuture<T> {
+        val future = SettableFuture.create<T>()
+        lifecycleScope.launch {
+            try {
+                future.set(block())
+            } catch (error: Throwable) {
+                future.setException(error)
+            }
+        }
+        return future
+    }
+
+    private fun notifyUser(message: String) {
+        android.widget.Toast.makeText(applicationContext, message, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
     private fun pauseForHeadsetDisconnect(isBluetooth: Boolean) {
         val navigator = ttsNavigator ?: return
         if (!navigator.playback.value.playWhenReady) return
@@ -688,8 +916,9 @@ class BookPlaybackService : MediaSessionService() {
         explicitUserPause = true
         PlaybackStateStore.clear()
         closeActivePublication()
-        mediaSession?.release()
-        mediaSession = null
+        // Keep the session alive: a connected Android Auto browser may hold this
+        // service bound, and a later book selection needs the library session.
+        // onDestroy releases it when the last client goes away.
         stopForeground(STOP_FOREGROUND_REMOVE)
         hasPlaybackNotification = false
         stopSelf()
@@ -708,7 +937,6 @@ class BookPlaybackService : MediaSessionService() {
         locationObserver?.cancel()
         playbackObserver = null
         locationObserver = null
-        placeholderPlayer?.let { player -> runCatching { mediaSession?.setPlayer(player) } }
         ttsNavigator?.close()
         ttsNavigator = null
         publication?.close()
@@ -743,34 +971,72 @@ class BookPlaybackService : MediaSessionService() {
 
     private fun refreshMediaNotification() {
         mediaSession?.let { session ->
-            session.setMediaButtonPreferences(mediaButtonPreferences())
+            val buttons = commandButtons()
+            session.setCustomLayout(buttons)
+            session.setMediaButtonPreferences(buttons)
             triggerNotificationUpdate()
         }
     }
 
     /**
-     * Buttons shown in the notification and on the lock screen. The slots place the
-     * sentence back/forward buttons around Media3's automatic play/pause button, so
-     * the controls read "previous sentence · play/pause · next sentence", with Stop
-     * tucked into the overflow menu.
+     * Buttons shown in the notification, on the lock screen, and in Android Auto's
+     * overflow menu. The slots place the sentence back/forward buttons around
+     * Media3's automatic play/pause button, so the controls read "previous sentence ·
+     * play/pause · next sentence". The overflow holds the voice, speed, read-along,
+     * and stop actions.
      */
-    private fun mediaButtonPreferences(): List<CommandButton> = listOf(
-        CommandButton.Builder(CommandButton.ICON_SKIP_BACK)
-            .setDisplayName("Previous sentence")
-            .setSessionCommand(skipBackCommand)
-            .setSlots(CommandButton.SLOT_BACK)
-            .build(),
-        CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD)
-            .setDisplayName("Next sentence")
-            .setSessionCommand(skipForwardCommand)
-            .setSlots(CommandButton.SLOT_FORWARD)
-            .build(),
-        CommandButton.Builder(CommandButton.ICON_STOP)
-            .setDisplayName("Stop playback")
-            .setSessionCommand(stopCommand)
-            .setSlots(CommandButton.SLOT_OVERFLOW)
-            .build(),
-    )
+    private fun commandButtons(): List<CommandButton> {
+        val rate = AppPreferences.speechRate(applicationContext)
+        val readAlong = PlaybackStateStore.state.value.readAlong
+        return listOf(
+            CommandButton.Builder(CommandButton.ICON_SKIP_BACK)
+                .setDisplayName("Previous sentence")
+                .setSessionCommand(skipBackCommand)
+                .setSlots(CommandButton.SLOT_BACK)
+                .build(),
+            CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD)
+                .setDisplayName("Next sentence")
+                .setSessionCommand(skipForwardCommand)
+                .setSlots(CommandButton.SLOT_FORWARD)
+                .build(),
+            CommandButton.Builder(CommandButton.ICON_SETTINGS)
+                .setDisplayName("Voice · ${currentVoiceLabel()}")
+                .setSessionCommand(cycleVoiceCommand)
+                .setSlots(CommandButton.SLOT_OVERFLOW)
+                .build(),
+            CommandButton.Builder(CommandButton.ICON_PLAYBACK_SPEED)
+                .setDisplayName("Speed · ${"%.1f".format(rate)}×")
+                .setSessionCommand(cycleRateCommand)
+                .setSlots(CommandButton.SLOT_OVERFLOW)
+                .build(),
+            CommandButton.Builder(
+                if (readAlong) CommandButton.ICON_SUBTITLES_OFF else CommandButton.ICON_SUBTITLES,
+            )
+                .setDisplayName(if (readAlong) "Hide read text" else "Show read text")
+                .setSessionCommand(readAlongCommand)
+                .setSlots(CommandButton.SLOT_OVERFLOW)
+                .build(),
+            CommandButton.Builder(CommandButton.ICON_STOP)
+                .setDisplayName("Stop playback")
+                .setSessionCommand(stopCommand)
+                .setSlots(CommandButton.SLOT_OVERFLOW)
+                .build(),
+        )
+    }
+
+    private fun currentVoiceLabel(): String =
+        if (AppPreferences.speechEngine(applicationContext) == SpeechEngine.POCKET) {
+            AppPreferences.pocketTtsVoice(applicationContext).replaceFirstChar(Char::uppercase)
+        } else {
+            val id = AppPreferences.systemTtsVoice(applicationContext)
+                ?: return "Device default"
+            val core = id.substringAfter("-x-", missingDelimiterValue = "")
+            if (core.isNotBlank()) {
+                core.substringBeforeLast('-').uppercase(Locale.US)
+            } else {
+                id.substringAfterLast('-').uppercase(Locale.US)
+            }
+        }
 
     private fun createReaderPendingIntent(uri: String, name: String, mimeType: String?): PendingIntent {
         val intent = Intent(this, ReaderActivity::class.java)
@@ -835,39 +1101,10 @@ class BookPlaybackService : MediaSessionService() {
         val session = mediaSession
         mediaSession = null
         session?.release()
-        placeholderPlayer?.release()
-        placeholderPlayer = null
+        sessionPlayer?.release()
+        sessionPlayer = null
         PlaybackStateStore.clear()
         super.onDestroy()
-    }
-
-    private inner class ProgressPlayer(player: Player) : ForwardingPlayer(player) {
-        private var artworkPath: String? = null
-        private var artworkData: ByteArray? = null
-
-        override fun getMediaMetadata(): MediaMetadata {
-            val builder = super.getMediaMetadata()
-                .buildUpon()
-                .setSubtitle("${(PlaybackStateStore.state.value.progress * 100).toInt()}% read")
-            artworkIfChanged()?.let { bytes ->
-                builder.setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-            }
-            return builder.build()
-        }
-
-        /**
-         * The derived cover is read once per book so the notification and lock
-         * screen show the same artwork as the in-app mini-player.
-         */
-        private fun artworkIfChanged(): ByteArray? {
-            val path = PlaybackStateStore.state.value.coverPath
-            if (path == artworkPath) return artworkData
-            artworkPath = path
-            artworkData = path?.let { candidate ->
-                runCatching { File(candidate).takeIf(File::isFile)?.readBytes() }.getOrNull()
-            }
-            return artworkData
-        }
     }
 
     private inner class ProgressMediaNotificationProvider(context: Context) :
@@ -881,6 +1118,15 @@ class BookPlaybackService : MediaSessionService() {
             val state = PlaybackStateStore.state.value
             val author = state.author?.takeIf(String::isNotBlank)
             val reading = "${(state.progress * 100).toInt()}% read"
+            if (state.readAlong) {
+                // The session title is the narrated sentence in read-along mode;
+                // keep the notification's second line as book context.
+                return listOfNotNull(
+                    state.title.takeIf(String::isNotBlank),
+                    author,
+                    reading,
+                ).joinToString(" · ")
+            }
             return listOfNotNull(author, reading).joinToString(" · ")
         }
     }
@@ -905,6 +1151,9 @@ class BookPlaybackService : MediaSessionService() {
         private const val MAX_ALIGN_SKIPS = 25
         private const val LOCATION_CHANGE_TIMEOUT_MS = 4_000L
         private val WHITESPACE_REGEX = Regex("\\s+")
+
+        /** Rates the car button steps through; matches the settings slider. */
+        private val RATE_STEPS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
     }
 }
 

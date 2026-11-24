@@ -5,9 +5,9 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 ## Current status
 
 - **Stage:** Initial Android implementation.
-- **Active branch:** `feature/folder-tree` (folder-tree browsing for connected folders).
-- **Current milestone:** Polish the EPUB reading and narration experience: continuous vertical scrolling that fills the window, all Android/ML Kit/Pocket voice selection during playback, live speech-rate control, long-press "Play from here", narration auto-follow, and background notification controls.
-- **Device strategy:** Host AVD is the default for UI, SAF, lifecycle, and Android System TTS. Pixel 11 (Tensor G6) is reserved for real Pocket TTS/LiteRT inference and performance.
+- **Active branch:** `feature/Android_Auto` (Android Auto media browsing and car controls).
+- **Current milestone:** Android Auto support: browse recent files and connected folders, play with car transport controls, switch voice/speed from the car, and show the narrated sentence in the now-playing view.
+- **Device strategy:** Host AVD is the default for UI, SAF, lifecycle, and Android System TTS. Pixel 11 (Tensor G6) is reserved for real Pocket TTS/LiteRT inference and performance. Android Auto is checked with the Desktop Head Unit against the same AVD/phone build.
 
 ## Completed
 
@@ -58,14 +58,16 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - [x] Added a speech-rate control to the mini-player (0.5x-2.0x) that applies without restarting the session: Android TTS receives new preferences; the Pocket session re-renders the current sentence at the new rate.
 - [x] Replaced double-tap-to-read with the long-press selection menu: `Play from here`, `Copy`, and `Share` are provided by `EpubNavigatorFragment.Configuration.selectionActionModeCallback` using `SelectableNavigator.currentSelection()`.
 - [x] Added folder-tree browsing for connected folders. The scanner now stores each book's path relative to its connected folder (Room v5→v6), and folder contents show subfolders one level at a time with breadcrumbs and back navigation, plus an "All files" toggle for the previous flat list. Existing libraries are re-scanned once in the background to fill the new paths. Unit tests cover the tree grouping; built and installed on the Pixel 11.
+- [x] Added Android Auto support: `BookPlaybackService` is now a Media3 `MediaLibraryService` with a browse tree (Recent files, connected Folders with subfolders, All books, search), a stable service-owned `SimpleBasePlayer` for car transport state/metadata, and car actions for previous/next sentence (also mapped to rewind/fast-forward), voice cycling, speed cycling, and read-along. Read-along puts the narrated sentence in the now-playing title plus a generated highlighted-text artwork, because Android Auto media apps cannot open a text screen; the phone mini-player gained a read-along view with the current word/range. The library book menu gained "Listen" for EPUBs. Verified on the API 37 AVD through a real MediaBrowser client: root/folder browsing, a generated EPUB streamed through Android System TTS, metadata, and read-along artwork. DHU/head-unit verification is pending.
 
 ## Immediate next steps
 
-1. Repeat the library, appearance, EPUB, and PDF smoke tests on a stable API 36 AVD and test the window-inset matrix.
-2. Verify persisted locator restoration and reading-stop history across process recreation.
-3. Verify System TTS interruption/cancellation, Bluetooth headset pause/resume and disconnect/reconnect, and audio-focus behavior on an API 36 AVD and representative Bluetooth devices.
-4. Audit PdfiumAndroid/JitPack licensing and native ABI/16 KB page-size support; validate more representative PDFs before claiming broader support.
-5. Confirm audible Pocket TTS narration from the EPUB on Pixel 11; test the sentence look-ahead buffer and jittered pauses, per-book voice selection, pause/stop/cancellation, seek/skip, the reader highlight tracking the playback head, offline behavior, first-audio latency, and memory use.
+1. Run the build on the API 36 AVD with the Android Auto Desktop Head Unit: verify the app appears in Auto, browses Recent files/Folders/All books, starts and resumes a book, and that the voice, speed, read-along, and stop overflow actions work.
+2. Repeat the library, appearance, EPUB, and PDF smoke tests on a stable API 36 AVD and test the window-inset matrix.
+3. Verify persisted locator restoration and reading-stop history across process recreation.
+4. Verify System TTS interruption/cancellation, Bluetooth headset pause/resume and disconnect/reconnect, and audio-focus behavior on an API 36 AVD and representative Bluetooth devices.
+5. Audit PdfiumAndroid/JitPack licensing and native ABI/16 KB page-size support; validate more representative PDFs before claiming broader support.
+6. Confirm audible Pocket TTS narration from the EPUB on Pixel 11; test the sentence look-ahead buffer and jittered pauses, per-book voice selection, pause/stop/cancellation, seek/skip, the reader highlight tracking the playback head, offline behavior, first-audio latency, and memory use.
 
 ## Blockers / pending verification
 
@@ -77,3 +79,4 @@ Update this page at meaningful work checkpoints. Keep the active milestone, rece
 - AGP 9.4 currently requires opting out of its new DSL to use Kotlin 2.4.20's external Android plugin. The opt-out is deprecated and must be revisited when AGP/Kotlin plugin compatibility improves.
 - The audio-focus/long-interruption refactor now builds and passes unit tests, debug assembly, and lint. Earlier Pixel logs showed both the service and Readium requesting audio focus; confirm on-device that the service now relies only on Readium's Media3 focus handling and does not compete with it.
 - Bluetooth disconnect/reconnect, automotive media controls, and interruption recovery still need device verification. Notification-shade and lock-screen transport controls are verified on Pixel 10. In-ear removal detection is not implemented because generic Bluetooth routing does not expose a reliable cross-device wear-state signal.
+- Android Auto media browsing is exercised on the API 37 AVD by a MediaBrowser client that browses the root/folders, starts a generated EPUB through System TTS, and toggles read-along metadata/artwork. It has not been run on a car head unit or the Desktop Head Unit yet; verify pagination/search, the custom overflow actions, and notification/foreground behavior with the Auto browser bound.

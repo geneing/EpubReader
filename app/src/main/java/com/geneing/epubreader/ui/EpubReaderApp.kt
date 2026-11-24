@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PictureAsPdf
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -166,6 +167,11 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
         uri?.let(viewModel::addDocument)
+    }
+
+    val listenToBook: (BookEntity) -> Unit = { book ->
+        viewModel.markBookOpened(book)
+        PlaybackServiceCommands.start(context, book.uri, book.progressPercent)
     }
 
     LaunchedEffect(state.message) {
@@ -302,6 +308,7 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                             viewModel.markBookOpened(book)
                             openBook(context, book)
                         },
+                        onListenBook = listenToBook,
                         onLoadMetadata = viewModel::loadBookMetadata,
                         onShareBook = { book -> shareBook(context, book) },
                         onRemoveBook = viewModel::removeBook,
@@ -332,6 +339,7 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                             viewModel.markBookOpened(book)
                             openBook(context, book)
                         },
+                        onListenBook = listenToBook,
                         onLoadMetadata = viewModel::loadBookMetadata,
                         onShareBook = { book -> shareBook(context, book) },
                         onRemoveBook = viewModel::removeBook,
@@ -366,6 +374,7 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                                 onAddFolder = { folderPicker.launch(null) },
                                 onAddFile = null,
                                 onOpenBook = {},
+                                onListenBook = {},
                                 onLoadMetadata = {},
                                 onShareBook = {},
                                 onRemoveBook = {},
@@ -385,6 +394,7 @@ fun EpubReaderApp(viewModel: LibraryViewModel) {
                                     viewModel.markBookOpened(book)
                                     openBook(context, book)
                                 },
+                                onListenBook = listenToBook,
                                 onLoadMetadata = viewModel::loadBookMetadata,
                                 onShareBook = { book -> shareBook(context, book) },
                                 onRemoveBook = viewModel::removeBook,
@@ -461,6 +471,7 @@ private fun LibraryContent(
     onAddFolder: (() -> Unit)?,
     onAddFile: (() -> Unit)?,
     onOpenBook: (BookEntity) -> Unit,
+    onListenBook: (BookEntity) -> Unit,
     onLoadMetadata: (BookEntity) -> Unit,
     onShareBook: (BookEntity) -> Unit,
     onRemoveBook: (BookEntity) -> Unit,
@@ -519,6 +530,7 @@ private fun LibraryContent(
                         book = book,
                         removing = "remove:${book.uri}" in busyKeys,
                         onOpen = { onOpenBook(book) },
+                        onListen = { onListenBook(book) },
                         onLoadMetadata = { onLoadMetadata(book) },
                         onRemove = { onRemoveBook(book) },
                         onShare = { onShareBook(book) },
@@ -604,6 +616,7 @@ private fun FolderBooksContent(
     onPathChange: (String) -> Unit,
     onFlatViewChange: (Boolean) -> Unit,
     onOpenBook: (BookEntity) -> Unit,
+    onListenBook: (BookEntity) -> Unit,
     onLoadMetadata: (BookEntity) -> Unit,
     onShareBook: (BookEntity) -> Unit,
     onRemoveBook: (BookEntity) -> Unit,
@@ -665,6 +678,7 @@ private fun FolderBooksContent(
                             book = book,
                             removing = "remove:${book.uri}" in busyKeys,
                             onOpen = { onOpenBook(book) },
+                            onListen = { onListenBook(book) },
                             onLoadMetadata = { onLoadMetadata(book) },
                             onRemove = { onRemoveBook(book) },
                             onShare = { onShareBook(book) },
@@ -694,6 +708,7 @@ private fun FolderBooksContent(
                             book = book,
                             removing = "remove:${book.uri}" in busyKeys,
                             onOpen = { onOpenBook(book) },
+                            onListen = { onListenBook(book) },
                             onLoadMetadata = { onLoadMetadata(book) },
                             onRemove = { onRemoveBook(book) },
                             onShare = { onShareBook(book) },
@@ -1316,6 +1331,7 @@ private fun BookCard(
     book: BookEntity,
     removing: Boolean,
     onOpen: () -> Unit,
+    onListen: () -> Unit,
     onLoadMetadata: () -> Unit,
     onRemove: () -> Unit,
     onShare: () -> Unit,
@@ -1413,6 +1429,16 @@ private fun BookCard(
                     Icon(Icons.Outlined.MoreVert, contentDescription = "Book options")
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    if (format == BookFormat.EPUB) {
+                        DropdownMenuItem(
+                            text = { Text("Listen") },
+                            leadingIcon = { Icon(Icons.Outlined.PlayArrow, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onListen()
+                            },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Share") },
                         onClick = {

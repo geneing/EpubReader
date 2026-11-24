@@ -132,6 +132,12 @@ The selected provider and supported voice settings are remembered per book. If t
 - Show narration state distinctly: preparing engine/model, speaking, paused, buffering/processing, completed, or error.
 - Sentence-based skip is preferred over arbitrary seconds because it keeps text location meaningful. Media-session seek actions can map to a configurable sentence/time window.
 
+### Android Auto
+
+- The car browse tree starts with **Recent files** (books opened most recently on the phone), then **Folders** for browsing books in the folders connected to EpubReader, then **All books**. Folder registration and scanning stay on the phone.
+- Selecting a book resumes it at its saved locator and starts narration. The car transport controls provide play/pause, previous/next sentence (rewind/fast-forward actions also skip sentences), a voice action that cycles the installed voices of the current engine, a speed action that steps 0.5×–2.0×, and a read-along action.
+- Android Auto media apps cannot open a free-form text screen. A "Show read text" action therefore puts the narrated sentence into the now-playing title and artwork, with the sentence highlighted; the full word-level read-along remains visible on the phone. Turning it off restores the book title and cover.
+
 ### Sleep timer
 
 - Quick durations and custom duration; clear countdown and cancel action.

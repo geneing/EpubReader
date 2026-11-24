@@ -147,6 +147,14 @@ If Pocket's Android system-service path proves unsuitable for in-process selecti
 - Sleep timer is a playback use case with lifecycle-independent persisted deadline, not a UI-screen timer. Persist/restore the deadline and stop cleanly at expiry.
 - Ensure one active speech request at a time. A new utterance cancels the old request; stop/pause cancels queued/generating audio according to provider semantics.
 
+### Android Auto library and car UI
+
+- `BookPlaybackService` extends Media3 `MediaLibraryService` and publishes a `MediaLibrarySession`. The manifest declares `androidx.media3.session.MediaLibraryService` and `android.media.browse.MediaBrowserService`, plus the `com.google.android.gms.car.application` metadata pointing at `res/xml/automotive_app_desc.xml` (`<uses name="media"/>`).
+- `AutoMediaLibrary` builds the browse tree from the Room library: root → Recent files / Folders / All books; folders are browsed recursively using each book's stored path relative to its connected SAF folder. Book nodes are playable and carry title, author or format, progress, cover URI, and `book:<content-uri>` media IDs. Folder IDs embed the tree URI and relative path as Base64 so no extra state is needed between calls.
+- `BookSessionPlayer` is a stable `SimpleBasePlayer` owned by the service, so the MediaSession does not lose its timeline when narration is recreated for a voice change. It publishes the current book and sentence from `PlaybackStateStore`, reports a 10-second seek increment for the car's rewind/fast-forward buttons (handled as sentence skips), supports `COMMAND_SET_SPEED_AND_PITCH`, and maps play/pause/skip/speed back to the service. Its available commands include `COMMAND_GET_METADATA`; without it controllers receive an empty combined metadata even when the current media item has a title.
+- Voice and speed are custom session commands exposed as `CommandButton`s in the overflow menu; the labels show the current voice and rate. Android Auto has no in-session list or dialog, so the voice action cycles the installed voices for the book language and the speed action steps through the same 0.5×–2.0× values as the phone slider.
+- Android Auto media apps cannot host arbitrary text templates. Read-along is therefore rendered with media metadata: when enabled, the narrated sentence becomes the now-playing title and is also rendered into a 1024×1024 dark PNG (highlighted sentence text) as artwork; `PlaybackStateStore` carries the current utterance and word range, so the phone mini-player can show the exact read-along text with the current word highlighted.
+
 ## 5. Persistence model
 
 Room is the recommended local database. Proposed entities:

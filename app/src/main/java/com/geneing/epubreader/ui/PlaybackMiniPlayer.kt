@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
+import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,6 +42,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.geneing.epubreader.data.AppPreferences
@@ -81,6 +86,7 @@ internal fun PlaybackMiniPlayer(
     }
     var voicePickerOpen by remember { mutableStateOf(false) }
     var rateDialogOpen by remember { mutableStateOf(false) }
+    var readAlongOpen by remember { mutableStateOf(false) }
     var speechRate by remember(rateDialogOpen) {
         mutableStateOf(AppPreferences.speechRate(context))
     }
@@ -157,6 +163,9 @@ internal fun PlaybackMiniPlayer(
                 IconButton(onClick = onSkipForward) {
                     Icon(Icons.Outlined.SkipNext, contentDescription = "Next sentence")
                 }
+                IconButton(onClick = { readAlongOpen = true }) {
+                    Icon(Icons.Outlined.Subtitles, contentDescription = "Show text being read")
+                }
                 TextButton(
                     onClick = { rateDialogOpen = true },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
@@ -231,4 +240,87 @@ internal fun PlaybackMiniPlayer(
             dismissButton = { TextButton(onClick = { rateDialogOpen = false }) { Text("Cancel") } },
         )
     }
+
+    if (readAlongOpen) {
+        ReadAlongDialog(
+            playback = playback,
+            onToggleCarText = {
+                com.geneing.epubreader.playback.PlaybackServiceCommands.toggleReadAlong(context)
+            },
+            onDismiss = { readAlongOpen = false },
+        )
+    }
+}
+
+/**
+ * The phone-side read-along view. It shows the sentence the narration engine is
+ * reading and marks the current word when the engine reports a word range.
+ */
+@Composable
+private fun ReadAlongDialog(
+    playback: PlaybackUiState,
+    onToggleCarText: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sentence = playback.currentUtterance?.trim().orEmpty()
+    val highlightColor = MaterialTheme.colorScheme.primaryContainer
+    val onHighlightColor = MaterialTheme.colorScheme.onPrimaryContainer
+    val text = remember(sentence, playback.currentRangeStart, playback.currentRangeEnd, highlightColor, onHighlightColor) {
+        buildAnnotatedString {
+            append(sentence)
+            val start = playback.currentRangeStart
+            val end = playback.currentRangeEnd
+            if (sentence.isNotEmpty()) {
+                if (start != null && end != null && start >= 0 && end > start && end <= sentence.length) {
+                    addStyle(
+                        SpanStyle(
+                            background = highlightColor,
+                            color = onHighlightColor,
+                        ),
+                        start,
+                        end,
+                    )
+                } else {
+                    addStyle(SpanStyle(background = highlightColor), 0, sentence.length)
+                }
+            }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(playback.title.ifBlank { "Read-along" }) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (sentence.isBlank()) {
+                    Text(
+                        "Narration will appear here as soon as it starts.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontStyle = FontStyle.Italic,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.titleLarge,
+                        textAlign = TextAlign.Start,
+                    )
+                }
+                Text(
+                    if (playback.readAlong) {
+                        "The same text is shown on the car screen."
+                    } else {
+                        "Android Auto cannot open a text screen, so the car shows this sentence in its now-playing view when you turn on read text."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {
+            TextButton(onClick = onToggleCarText) {
+                Text(if (playback.readAlong) "Hide on car screen" else "Show on car screen")
+            }
+        },
+    )
 }
