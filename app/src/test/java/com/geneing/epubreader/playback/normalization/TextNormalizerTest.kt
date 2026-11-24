@@ -153,6 +153,14 @@ class TextNormalizerTest {
             "one thousand two hundred thirty-four",
             TextNormalizer.forLanguage(Language("en-GB")).normalize("1,234"),
         )
+        assertEquals(
+            "one thousand two hundred thirty-four",
+            TextNormalizer.forLanguage(Language("und")).normalize("1,234"),
+        )
+        assertEquals(
+            "one thousand two hundred thirty-four",
+            TextNormalizer.forLanguage(Language("en_US")).normalize("1,234"),
+        )
     }
 
     @Test

@@ -67,12 +67,15 @@ internal class TextNormalizer(private val rules: List<TextNormalizationRule>) {
         private val Identity: TextNormalizer = TextNormalizer(emptyList())
 
         /**
-         * Picks a normalizer for [language]. Unknown languages fall back to
-         * English; non-English languages are currently passed through
-         * unchanged rather than mis-pronounced by English rules.
+         * Picks a normalizer for [language]. A missing, blank or undetermined
+         * (`und`) language still gets the English pipeline, so the default
+         * narration path is normalized rather than skipped. Other non-English
+         * languages are passed through unchanged rather than mis-pronounced by
+         * English rules.
          */
         fun forLanguage(language: Language?): TextNormalizer {
-            val code = language?.code ?: return English
+            val code = language?.code?.lowercase().orEmpty()
+            if (code.isEmpty() || code == "und") return English
             return if (code == "en" || code.startsWith("en-")) English else Identity
         }
     }

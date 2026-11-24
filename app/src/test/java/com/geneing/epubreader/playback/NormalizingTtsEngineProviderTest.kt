@@ -33,15 +33,53 @@ class NormalizingTtsEngineProviderTest {
     }
 
     @Test
+    fun missingLanguageStillUsesTheEnglishPipeline() {
+        val delegate = FakeEngine()
+        val engine = NormalizingTtsEngineProvider.NormalizingEngine(delegate)
+
+        engine.speak(TtsEngine.RequestId("1"), "Mr. Smith paid $1,234.", null)
+
+        assertEquals(
+            "Mister Smith paid one thousand two hundred thirty-four dollars.",
+            delegate.spoken,
+        )
+    }
+
+    @Test
+    fun undeterminedLanguageStillUsesTheEnglishPipeline() {
+        val delegate = FakeEngine()
+        val engine = NormalizingTtsEngineProvider.NormalizingEngine(delegate)
+
+        engine.speak(TtsEngine.RequestId("1"), "Mr. Smith paid $1,234.", Language("und"))
+
+        assertEquals(
+            "Mister Smith paid one thousand two hundred thirty-four dollars.",
+            delegate.spoken,
+        )
+    }
+
+    @Test
+    fun publicationLanguageIsUsedWhenTheUtteranceHasNone() {
+        val delegate = FakeEngine()
+        val engine = NormalizingTtsEngineProvider.NormalizingEngine(
+            delegate,
+            publicationLanguage = Language("fr"),
+        )
+
+        engine.speak(TtsEngine.RequestId("1"), "M. Dupont a payé $1,234.", null)
+
+        // French is outside the pipeline, as it is on the Pocket path.
+        assertEquals("M. Dupont a payé $1,234.", delegate.spoken)
+    }
+
+    @Test
     fun nonEnglishTextIsPassedThroughUnchanged() {
         val delegate = FakeEngine()
         val engine = NormalizingTtsEngineProvider.NormalizingEngine(delegate)
 
-        // The wrapper always uses the English pipeline; prose without English
-        // patterns is left as-is.
-        engine.speak(TtsEngine.RequestId("1"), "Bonjour le monde", Language("fr"))
+        engine.speak(TtsEngine.RequestId("1"), "M. Dupont a payé $1,234.", Language("fr"))
 
-        assertEquals("Bonjour le monde", delegate.spoken)
+        assertEquals("M. Dupont a payé $1,234.", delegate.spoken)
     }
 
     @Test

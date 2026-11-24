@@ -89,8 +89,12 @@ internal class ReadiumNarrationController(
     ): NarrationLocation = NarrationLocation(
         href = location.href,
         // The engine speaks the normalized text and reports ranges against it,
-        // so the reader highlight must use the same string to stay aligned.
-        utterance = TextNormalizer.English.normalize(location.utterance),
+        // so the reader highlight must use the same string to stay aligned. The
+        // engine picks its rules from the utterance language, which Readium
+        // resolves from the content segment or this settings language.
+        utterance = TextNormalizer
+            .forLanguage(navigator.settings.value.language)
+            .normalize(location.utterance),
         range = location.range,
         utteranceLocator = location.utteranceLocator,
     )

@@ -18,20 +18,24 @@ import org.readium.r2.shared.util.Try
 
 /**
  * Wraps Readium's [AndroidTtsEngineProvider] so every Android System TTS
- * utterance is rewritten by [TextNormalizer] before it is spoken.
+ * utterance is rewritten by the app's [TextNormalizer] pipeline before it is
+ * spoken.
  *
  * Readium owns the System TTS loop, so the only place to change the spoken
  * string is the engine it drives. Readium's own sentence tokenizer cannot do
  * this: `TextContentTokenizer` returns source offsets that are sliced straight
  * out of the book text, so expansion has to happen at the engine boundary.
  *
- * Normalization uses the English pipeline. The normalizer can also be supplied
- * directly, which keeps the rewrite testable without an Android engine.
+ * Normalization follows the utterance language through
+ * [TextNormalizer.forLanguage], falling back to the publication language and
+ * then English. A missing/default language therefore still normalizes with the
+ * English pipeline. The resolver can be supplied directly, which keeps the
+ * rewrite testable without an Android engine.
  */
 @OptIn(ExperimentalReadiumApi::class)
 internal class NormalizingTtsEngineProvider(
     private val delegate: AndroidTtsEngineProvider,
-    private val normalizer: TextNormalizer = TextNormalizer.English,
+    private val normalizerFor: (Language?) -> TextNormalizer = TextNormalizer::forLanguage,
 ) : TtsEngineProvider<
     AndroidTtsSettings,
     AndroidTtsPreferences,
@@ -48,7 +52,9 @@ internal class NormalizingTtsEngineProvider(
         Error,
         > =
         delegate.createEngine(publication, initialPreferences)
-            .map { engine -> NormalizingEngine(engine, normalizer) }
+            .map { engine ->
+                NormalizingEngine(engine, normalizerFor, publication.metadata.language)
+            }
 
     override fun createPreferencesEditor(
         publication: Publication,
@@ -75,9 +81,12 @@ internal class NormalizingTtsEngineProvider(
      * A [TtsEngine] that rewrites utterance text before handing it to the
      * wrapped engine. Every other operation delegates unchanged.
      *
-     * The engine's range callbacks then report offsets into the normalized
-     * string; `ReadiumNarrationController` normalizes `location.utterance` the
-     * same way so the reader highlight stays aligned.
+     * The normalizer is chosen per utterance with [normalizerFor], falling back
+     * to [publicationLanguage] when Readium reports none; `null` resolves to the
+     * English pipeline. The engine's range callbacks then report offsets into
+     * the normalized string; `ReadiumNarrationController` normalizes
+     * `location.utterance` with the same language gate so the reader highlight
+     * stays aligned.
      */
     internal class NormalizingEngine(
         private val delegate: TtsEngine<
@@ -86,7 +95,8 @@ internal class NormalizingTtsEngineProvider(
             AndroidTtsEngine.Error,
             AndroidTtsEngine.Voice,
             >,
-        private val normalizer: TextNormalizer = TextNormalizer.English,
+        private val normalizerFor: (Language?) -> TextNormalizer = TextNormalizer::forLanguage,
+        private val publicationLanguage: Language? = null,
     ) : TtsEngine<
         AndroidTtsSettings,
         AndroidTtsPreferences,
@@ -102,7 +112,7 @@ internal class NormalizingTtsEngineProvider(
         override val voices get() = delegate.voices
 
         override fun speak(requestId: TtsEngine.RequestId, text: String, language: Language?) {
-            val spoken = normalizer.normalize(text)
+            val spoken = normalizerFor(language ?: publicationLanguage).normalize(text)
             lastSpokenText = spoken
             delegate.speak(requestId, spoken, language)
         }

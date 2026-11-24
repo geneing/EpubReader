@@ -43,9 +43,10 @@ Current integration: `PocketNarrationSession.renderSentence` (Pocket path) and
    expand them again. The combined contract is idempotence:
    `normalize(normalize(text)) == normalize(text)`.
 4. **Language-gated.** `TextNormalizer.forLanguage` returns the English pipeline
-   for `en*` and `null`, and a pass-through for other languages. Pocket TTS is
-   English-only, but the gate keeps other providers safe and is where
-   per-language rules will attach.
+   for `en*` and for a missing, blank, or undetermined (`und`) language, so the
+   default narration path is still normalized. Other languages get a
+   pass-through so they are not mis-pronounced by English rules; that gate is
+   where per-language rules will attach. Pocket TTS is English-only today.
 5. **Provider-agnostic.** Nothing in the package imports Pocket or Android TTS;
    it is unit-testable on the host JVM without `android.icu`.
 
@@ -227,12 +228,15 @@ Remaining work, roughly by value.
 - **Android System TTS (Readium-owned loop):** the tokenizer cannot rewrite
   text (it only returns `IntRange`s that `TextContentTokenizer` slices), so the
   seam is `NormalizingTtsEngineProvider` — a `TtsEngineProvider` decorator whose
-  `TtsEngine.speak` normalizes the utterance before delegating to
-  `AndroidTtsEngine`. `BookPlaybackService` builds it with
+  `TtsEngine.speak` picks `TextNormalizer.forLanguage(utterance language)` and
+  normalizes the utterance before delegating to `AndroidTtsEngine`. The
+  publication language (then English) is the fallback when Readium reports no
+  utterance language, so the default path never skips normalization.
+  `BookPlaybackService` builds it with
   `ttsEngineProvider = NormalizingTtsEngineProvider(AndroidTtsEngineProvider(…))`.
   The range callback indexes the normalized string, so `ReadiumNarrationController`
-  normalizes `location.utterance` the same way to keep highlight offsets
-  consistent.
+  normalizes `location.utterance` with the same language gate (`settings.language`)
+  to keep highlight offsets consistent.
 - **Future providers:** normalize in the single place each provider receives
   utterance text; never in a shared layer that also feeds locators.
 
